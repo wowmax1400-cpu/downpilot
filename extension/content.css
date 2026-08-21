@@ -1,0 +1,6 @@
+/* Minimal structural styles for the injection point; the shadow DOM
+   carries its own styles so this is mostly a placeholder. */
+#downpilot-overlay {
+  position: fixed;
+  z-index: 2147483647;
+}

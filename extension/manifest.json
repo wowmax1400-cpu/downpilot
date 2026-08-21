@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "DownPilot Downloader",
+  "version": "0.1.0",
+  "description": "Grab videos and files with DownPilot: inline quality picker, context menu, and download interception.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5rRzlhTYSv6sQnVIO5FynHiBxKq8D2Fj1mxq2XwO9YzTGrLV8TV4GY6G/uPKL3RsC4L+HJnjlMwTMzckQyNpCL3Cchy+NzhFZWKPVs8bA/rcxVRUMJDxI0sNKVkAl6P+m2QTtbLsLnlPL/xfQLl1kPLdpFlY+BHYGyYLUoWuon+UyQ518P4cJyyG8qtpMm/QUheQo4HfyCf2V8F93RyEIhIOpkDMALBAvfAJ4Ge2xFH5vnYiTdWE8JvcodHnjmmEJjpcaOijZ6U4sZdMQYKMNa5Q9AIAE2YjXL0dOxgAxAjIhwDvH0T3VQcleWzagEZHG1pAe3XcOB98zmjyMcHJaQIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "downloads",
+    "contextMenus",
+    "storage",
+    "activeTab",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DownPilot",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

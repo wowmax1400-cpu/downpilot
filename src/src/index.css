@@ -1,0 +1,370 @@
+/* ==========================================================================
+   Tailwind directives — these generate ALL utility classes (flex, px-3,
+   rounded-md, etc.) that every component depends on. Without them the app
+   runs unthemed and unstyled.
+   ========================================================================== */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   DownPilot theme engine
+   Every palette is a set of CSS custom properties. Themes are applied by
+   setting data-theme on <html>; the accent color can be overridden
+   independently via data-accent (set from the accent picker in Settings).
+   ========================================================================== */
+
+:root {
+  /* default fallback: Zinc Dark / commercial-grade hierarchy
+     bg (app) < surface (sidebar) < surface-2 (cards) < surface-3 (hover) */
+  --bg: #09090b;
+  --surface: #121214;
+  --surface-2: #18181b;
+  --surface-3: #202024;
+  --line: #27272a;
+  --text: #f4f4f5; /* zinc-100 */
+  --text-dim: #a1a1aa; /* zinc-400 */
+  --text-faint: #71717a; /* zinc-500 */
+  --accent: #7c5cff;
+  --accent-soft: rgba(124, 92, 255, 0.16);
+  --accent-text: #ffffff;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #38bdf8;
+  --progress-track: #232327;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  /* top-edge lighting on major containers (glassmorphic depth) */
+  --light-edge: rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+/* ---- Theme: Deep Midnight (OLED black, purple accent) ------------------ */
+html[data-theme="deep-midnight"] {
+  --bg: #09090b;
+  --surface: #121214;
+  --surface-2: #18181b;
+  --surface-3: #202024;
+  --line: #27272a;
+  --text: #f4f4f5;
+  --text-dim: #a1a1aa;
+  --text-faint: #71717a;
+  --accent: #7c5cff;
+  --accent-soft: rgba(124, 92, 255, 0.16);
+  --accent-text: #ffffff;
+  --progress-track: #232327;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  --light-edge: rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+/* ---- Theme: Modern Dark (soft slate, blue accent) ---------------------- */
+html[data-theme="modern-dark"] {
+  --bg: #101318;
+  --surface: #171b22;
+  --surface-2: #1f242d;
+  --surface-3: #272d38;
+  --line: #2c3340;
+  --text: #e6e9ef;
+  --text-dim: #9aa3b2;
+  --text-faint: #67707f;
+  --accent: #3b82f6;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+  --accent-text: #ffffff;
+  --progress-track: #232a35;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --light-edge: rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+/* ---- Theme: Clean Light (paper white, indigo accent) ------------------- */
+html[data-theme="clean-light"] {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #f0f1f4;
+  --surface-3: #e7e9ee;
+  --line: #d9dce3;
+  --text: #1b1e24;
+  --text-dim: #5c6470;
+  --text-faint: #98a0ac;
+  --accent: #4f46e5;
+  --accent-soft: rgba(79, 70, 229, 0.1);
+  --accent-text: #ffffff;
+  --progress-track: #e4e6eb;
+  --shadow: 0 8px 30px rgba(15, 23, 42, 0.12);
+  --light-edge: rgba(255, 255, 255, 0.85);
+  color-scheme: light;
+}
+
+/* ---- Theme: Cyberpunk (Bazzite purple, neon) --------------------------- */
+html[data-theme="cyberpunk"] {
+  --bg: #0b0712;
+  --surface: #130d1f;
+  --surface-2: #1c1430;
+  --surface-3: #261a40;
+  --line: #332453;
+  --text: #efe9ff;
+  --text-dim: #a89cc4;
+  --text-faint: #6f6390;
+  --accent: #a855f7;
+  --accent-soft: rgba(168, 85, 247, 0.18);
+  --accent-text: #ffffff;
+  --success: #4ade80;
+  --warning: #facc15;
+  --danger: #fb7185;
+  --info: #22d3ee;
+  --progress-track: #241939;
+  --shadow: 0 8px 30px rgba(124, 58, 237, 0.25);
+  --light-edge: rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+}
+
+/* Accent override — set inline by the accent picker */
+html[data-accent] {
+  --accent: var(--accent-custom, var(--accent));
+  --accent-soft: var(--accent-custom-soft, var(--accent-soft));
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Thin themed scrollbars (WebKit; WebKitGTK respects this) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* Tabular numbers everywhere sizes/speeds are shown */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Progress bar — ACTIVE fill. Layered animated gradient + sliding stripes.
+   Both layers animate `transform: translateX()` (GPU-composited) rather than
+   background-position, so no per-frame repaint — the old background-position
+   stripes froze the Wayland compositor under fractional scaling on this
+   VRAM-constrained NVIDIA box. Guards below (tab-hidden / reduced-motion)
+   still kill the motion when it can't be seen. */
+.dp-progress-fill {
+  position: relative;
+  overflow: hidden;
+  background-color: #34d399; /* emerald-400 base under the layers */
+}
+
+/* Layer 1 — dual-stop gradient sweeping emerald-400 → cyan-400 → back */
+.dp-progress-fill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 200%;
+  background: linear-gradient(90deg, #34d399, #22d3ee, #34d399);
+  animation: dp-gradient-slide 2.4s ease-in-out infinite;
+}
+
+/* Layer 2 — diagonal stripes sliding linearly (IDM-style activity) */
+.animate-stripes::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.16) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.16) 50%,
+    rgba(255, 255, 255, 0.16) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 24px 24px;
+  animation: move-stripes 0.8s linear infinite;
+}
+
+@keyframes move-stripes {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(24px);
+  }
+}
+
+@keyframes dp-gradient-slide {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes dp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+/* Opacity pulse is cheap (no repaint of background, GPU compositor only).
+   Used sparingly; removed from the speed readout to keep idle GPU load low. */
+.dp-pulse {
+  animation: dp-pulse 1.4s ease-in-out infinite;
+}
+
+/* Tab hidden or user prefers reduced motion: kill the infinite animations.
+   The pseudo-elements (.dp-progress-fill::before/.after, .animate-stripes::after)
+   are targeted explicitly because animation-play-state on the parent does NOT
+   cascade to them. */
+html.tab-hidden .dp-progress-fill::before,
+html.tab-hidden .dp-progress-fill::after,
+html.tab-hidden .dp-pulse {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dp-progress-fill::before,
+  .dp-progress-fill::after,
+  .dp-pulse {
+    animation: none;
+  }
+}
+
+/* Row hover + selected states — #202024 with a subtle white tint for depth */
+.dp-row {
+  transition: background-color 0.2s ease-in-out;
+}
+.dp-row:hover {
+  background-color: var(--surface-3);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.02));
+}
+.dp-row-selected {
+  background: var(--accent-soft);
+}
+
+/* Table row borders — on cells, not <tr>, because the table uses
+   border-separate (needed for the sticky Actions column to work). */
+.dp-row td {
+  border-bottom: 1px solid var(--line);
+}
+.dp-row:last-child td {
+  border-bottom: 0;
+}
+.dp-thead th {
+  border-bottom: 1px solid var(--line);
+}
+
+/* Sticky Actions column — stays pinned to the right edge while the rest
+   of the table scrolls horizontally, so row actions are never lost. */
+.dp-sticky-actions {
+  position: sticky;
+  right: 0;
+  background: var(--surface-2);
+  border-left: 1px solid var(--line);
+}
+.dp-row:hover .dp-sticky-actions {
+  background: var(--surface-3);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.02));
+}
+.dp-row-selected .dp-sticky-actions {
+  background: var(--accent-soft);
+}
+
+/* Top-edge lighting — glassmorphic depth on major containers */
+.dp-light-edge {
+  border-top: 1px solid var(--light-edge);
+}
+
+/* Glowing status dots (soft halo, GPU-cheap box-shadow) */
+.dp-dot {
+  border-radius: 9999px;
+}
+.dp-dot-success {
+  background: var(--success);
+  box-shadow: 0 0 6px 1px rgba(52, 211, 153, 0.55);
+}
+.dp-dot-warning {
+  background: var(--warning);
+  box-shadow: 0 0 6px 1px rgba(251, 191, 36, 0.5);
+}
+.dp-dot-muted {
+  background: var(--text-faint);
+  box-shadow: 0 0 6px 1px rgba(113, 113, 122, 0.45);
+}
+.dp-dot-danger {
+  background: var(--danger);
+  box-shadow: 0 0 6px 1px rgba(248, 113, 113, 0.5);
+}
+
+/* Table header — solid background (no backdrop-filter: blur — that forces
+   the GPU to re-composite the whole screen on every scroll and chokes
+   NVIDIA Wayland when VRAM is tight) */
+.dp-thead {
+  background: var(--surface-2);
+}
+
+/* Modal backdrop — plain dark overlay. backdrop-filter blur is skipped:
+   it forces full-screen GPU re-composites on NVIDIA Wayland. */
+.dp-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  animation: dp-fade 0.15s ease;
+}
+@keyframes dp-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.dp-pop {
+  animation: dp-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes dp-pop {
+  from {
+    transform: scale(0.96) translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}

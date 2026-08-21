@@ -1,0 +1,18 @@
+[package]
+name = "downpilot-core"
+version = "0.1.0"
+edition = "2021"
+description = "DownPilot download engine: chunked downloads, pause/resume, SQLite persistence, yt-dlp wrapper"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+thiserror = "2"
+futures-util = "0.3"
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+chrono = "0.4"
