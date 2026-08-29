@@ -109,7 +109,10 @@
     const btnH = 34;
     const pad = 8;
     let left = Math.min(rect.right - btnW - pad, window.innerWidth - btnW - pad);
-    let top = Math.min(rect.bottom - btnH - pad, window.innerHeight - btnH - pad);
+    // Pin the button to the TOP edge of the media element (IDM-style),
+    // not the bottom. Falls back to the viewport top when the element's
+    // top is off-screen.
+    let top = Math.min(rect.top + pad, window.innerHeight - btnH - pad);
     left = Math.max(pad, left);
     top = Math.max(pad, top);
     container.style.left = left + "px";
@@ -156,6 +159,57 @@
     );
   }
 
+  function isDirectFile(url) {
+    try {
+      const p = new URL(url).pathname;
+      return /\.[a-z0-9]{2,5}$/i.test(p);
+    } catch {
+      return false;
+    }
+  }
+
+  // Plain "download now" — sends straight to the desktop app (chunked engine).
+  // No yt-dlp round-trip, so it's instant for direct file URLs.
+  function quickDownload() {
+    const url = currentSrc();
+    if (!url) return;
+    closeDropdown();
+    if (isDirectFile(url)) {
+      sendDownload(url, null);
+      return;
+    }
+    // Media *page* (YouTube, etc.): need a format picker -> analyze.
+    analyzeMedia();
+  }
+
+  function sendDownload(url, formatId) {
+    const note = document.createElement("div");
+    note.className = "dp-dropdown";
+    note.innerHTML = '<div style="padding:10px;font-size:12px;color:#9d9da8">Sending to DownPilot…</div>';
+    shadowRoot.getElementById("dp").appendChild(note);
+    setTimeout(() => note.remove(), 2000);
+    chrome.runtime.sendMessage(
+      {
+        action: "download",
+        url,
+        format_id: formatId,
+        referer: window.location.href,
+        user_agent: navigator.userAgent,
+        cookies: document.cookie,
+      },
+      (resp) => {
+        note.remove();
+        if (!resp || !resp.ok) {
+          const err = document.createElement("div");
+          err.className = "dp-dropdown";
+          err.innerHTML = `<div style="padding:10px;font-size:12px;color:#f87171">${resp?.error || "Failed — is DownPilot running?"}</div>`;
+          shadowRoot.getElementById("dp").appendChild(err);
+          setTimeout(() => err.remove(), 2500);
+        }
+      }
+    );
+  }
+
   function analyzeMedia() {
     const url = currentSrc();
     if (!url) return;
@@ -167,13 +221,27 @@
     loading.innerHTML = '<div style="padding:12px;display:flex;align-items:center;gap:8px;font-size:12px;color:#9d9da8"><div class="dp-spinner"></div> Analyzing…</div>';
     container.appendChild(loading);
 
+    let done = false;
+    const to = setTimeout(() => {
+      if (done) return;
+      done = true;
+      loading.remove();
+      // yt-dlp slow/unavailable: fall back to a direct download of the URL.
+      sendDownload(url, null);
+    }, 8000);
+
     chrome.runtime.sendMessage(
       { action: "analyze", url, cookies: document.cookie, referer: window.location.href, user_agent: navigator.userAgent },
       (resp) => {
+        if (done) return;
+        done = true;
+        clearTimeout(to);
         loading.remove();
-        if (resp && resp.ok && resp.media && resp.media.best_formats) {
+        if (resp && resp.ok && resp.media && resp.media.best_formats && resp.media.best_formats.length) {
           const dropdown = buildDropdown(resp.media.best_formats);
           container.appendChild(dropdown);
+        } else if (resp && resp.ok && isDirectFile(url)) {
+          sendDownload(url, null);
         } else {
           const err = document.createElement("div");
           err.className = "dp-dropdown";
@@ -188,14 +256,7 @@
   function doDownload(formatId) {
     const url = currentSrc();
     if (!url) return;
-    chrome.runtime.sendMessage({
-      action: "download",
-      url,
-      format_id: formatId,
-      referer: window.location.href,
-      user_agent: navigator.userAgent,
-      cookies: document.cookie,
-    });
+    sendDownload(url, formatId);
   }
 
   // ---- Main button (IDM-style: draggable) ---------------------------------
@@ -281,7 +342,7 @@
         e.preventDefault();
         // If the user just dragged, a swallow handler already intercepted.
         if (dragState) return;
-        analyzeMedia();
+        quickDownload();
       });
 
       // --- Hover info tooltip (IDM-style: name, size, format) ---

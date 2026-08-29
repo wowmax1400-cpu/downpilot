@@ -1,0 +1,267 @@
+# Permission definitions for DownPilot's own commands.
+# Each `allow-<command>` is referenced from capabilities/default.json.
+
+[[permission]]
+identifier = "allow-list-downloads"
+description = "Allow listing all downloads"
+commands.allow = ["list_downloads"]
+
+[[permission]]
+identifier = "allow-add-download"
+description = "Allow adding a new download"
+commands.allow = ["add_download"]
+
+[[permission]]
+identifier = "allow-pause-download"
+description = "Allow pausing a download"
+commands.allow = ["pause_download"]
+
+[[permission]]
+identifier = "allow-resume-download"
+description = "Allow resuming a download"
+commands.allow = ["resume_download"]
+
+[[permission]]
+identifier = "allow-cancel-download"
+description = "Allow cancelling a download"
+commands.allow = ["cancel_download"]
+
+[[permission]]
+identifier = "allow-remove-download"
+description = "Allow removing a download from the list"
+commands.allow = ["remove_download"]
+
+[[permission]]
+identifier = "allow-analyze-url"
+description = "Allow analyzing a media URL (yt-dlp probe)"
+commands.allow = ["analyze_url"]
+
+[[permission]]
+identifier = "allow-get-settings"
+description = "Allow reading app settings"
+commands.allow = ["get_settings"]
+
+[[permission]]
+identifier = "allow-set-setting"
+description = "Allow writing a single app setting"
+commands.allow = ["set_setting"]
+
+[[permission]]
+identifier = "allow-get-default-dir"
+description = "Allow reading the default download directory"
+commands.allow = ["get_default_dir"]
+
+[[permission]]
+identifier = "allow-open-in-file-manager"
+description = "Allow opening a path in the file manager"
+commands.allow = ["open_in_file_manager"]
+
+[[permission]]
+identifier = "allow-open-file"
+description = "Allow opening a downloaded file with the OS default handler"
+commands.allow = ["open_file"]
+
+[[permission]]
+identifier = "allow-grab-site"
+description = "Allow grabbing downloadable links from a page"
+commands.allow = ["grab_site"]
+
+[[permission]]
+identifier = "allow-list-queues"
+description = "Allow listing download queues"
+commands.allow = ["list_queues"]
+
+[[permission]]
+identifier = "allow-create-queue"
+description = "Allow creating a download queue"
+commands.allow = ["create_queue"]
+
+[[permission]]
+identifier = "allow-update-queue"
+description = "Allow updating a download queue"
+commands.allow = ["update_queue"]
+
+[[permission]]
+identifier = "allow-delete-queue"
+description = "Allow deleting a download queue"
+commands.allow = ["delete_queue"]
+
+[[permission]]
+identifier = "allow-list-sites"
+description = "Allow listing site rules"
+commands.allow = ["list_sites"]
+
+[[permission]]
+identifier = "allow-save-site"
+description = "Allow saving a site rule"
+commands.allow = ["save_site"]
+
+[[permission]]
+identifier = "allow-delete-site"
+description = "Allow deleting a site rule"
+commands.allow = ["delete_site"]
+
+[[permission]]
+identifier = "allow-list-schedules"
+description = "Allow listing schedules"
+commands.allow = ["list_schedules"]
+
+[[permission]]
+identifier = "allow-save-schedule"
+description = "Allow saving a schedule"
+commands.allow = ["save_schedule"]
+
+[[permission]]
+identifier = "allow-delete-schedule"
+description = "Allow deleting a schedule"
+commands.allow = ["delete_schedule"]
+
+[[permission]]
+identifier = "allow-list-categories"
+description = "Allow listing categories"
+commands.allow = ["list_categories"]
+
+[[permission]]
+identifier = "allow-save-category"
+description = "Allow saving a category"
+commands.allow = ["save_category"]
+
+[[permission]]
+identifier = "allow-delete-category"
+description = "Allow deleting a category"
+commands.allow = ["delete_category"]
+
+[[permission]]
+identifier = "allow-resume-all"
+description = "Allow resuming all downloads"
+commands.allow = ["resume_all"]
+
+[[permission]]
+identifier = "allow-pause-all"
+description = "Allow pausing all downloads"
+commands.allow = ["pause_all"]
+
+[[permission]]
+identifier = "allow-stop-all"
+description = "Allow stopping all downloads"
+commands.allow = ["stop_all"]
+
+[[permission]]
+identifier = "allow-retry-all"
+description = "Allow retrying all failed downloads"
+commands.allow = ["retry_all"]
+
+[[permission]]
+identifier = "allow-redownload"
+description = "Allow re-downloading a file"
+commands.allow = ["redownload"]
+
+[[permission]]
+identifier = "allow-move-to-queue"
+description = "Allow moving a download to a queue"
+commands.allow = ["move_to_queue"]
+
+[[permission]]
+identifier = "allow-set-category"
+description = "Allow setting a download's category"
+commands.allow = ["set_category"]
+
+[[permission]]
+identifier = "allow-rename-download"
+description = "Allow renaming a download"
+commands.allow = ["rename_download"]
+
+[[permission]]
+identifier = "allow-set-save-dir"
+description = "Allow changing a download's save directory"
+commands.allow = ["set_save_dir"]
+
+[[permission]]
+identifier = "allow-set-description"
+description = "Allow setting a download's description"
+commands.allow = ["set_description"]
+
+[[permission]]
+identifier = "allow-recheck-download"
+description = "Allow re-checking a download's existing data"
+commands.allow = ["recheck_download"]
+
+[[permission]]
+identifier = "allow-delete-file"
+description = "Allow deleting a downloaded file"
+commands.allow = ["delete_file"]
+
+[[permission]]
+identifier = "allow-remove-keep-file"
+description = "Allow removing a download record but keeping the file"
+commands.allow = ["remove_keep_file"]
+
+[[permission]]
+identifier = "allow-export-downloads"
+description = "Allow exporting the download list"
+commands.allow = ["export_downloads"]
+
+[[permission]]
+identifier = "allow-import-downloads"
+description = "Allow importing a download list"
+commands.allow = ["import_downloads"]
+
+[[permission]]
+identifier = "allow-clear-finished"
+description = "Allow clearing finished downloads"
+commands.allow = ["clear_finished"]
+
+[[permission]]
+identifier = "allow-set-queue-speed"
+description = "Allow setting a per-queue speed limit"
+commands.allow = ["set_queue_speed"]
+
+# Convenience set bundling every command, so the capability can grant all at once.
+[[set]]
+identifier = "downpilot-commands"
+description = "Allow all DownPilot download-engine commands"
+permissions = [
+  "allow-list-downloads",
+  "allow-add-download",
+  "allow-pause-download",
+  "allow-resume-download",
+  "allow-cancel-download",
+  "allow-remove-download",
+  "allow-analyze-url",
+  "allow-get-settings",
+  "allow-set-setting",
+  "allow-get-default-dir",
+  "allow-open-in-file-manager",
+  "allow-open-file",
+  "allow-grab-site",
+  "allow-list-queues",
+  "allow-create-queue",
+  "allow-update-queue",
+  "allow-delete-queue",
+  "allow-list-sites",
+  "allow-save-site",
+  "allow-delete-site",
+  "allow-list-schedules",
+  "allow-save-schedule",
+  "allow-delete-schedule",
+  "allow-list-categories",
+  "allow-save-category",
+  "allow-delete-category",
+  "allow-resume-all",
+  "allow-pause-all",
+  "allow-stop-all",
+  "allow-retry-all",
+  "allow-redownload",
+  "allow-move-to-queue",
+  "allow-set-category",
+  "allow-rename-download",
+  "allow-set-save-dir",
+  "allow-set-description",
+  "allow-recheck-download",
+  "allow-delete-file",
+  "allow-remove-keep-file",
+  "allow-export-downloads",
+  "allow-import-downloads",
+  "allow-clear-finished",
+  "allow-set-queue-speed"
+]

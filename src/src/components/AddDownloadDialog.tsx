@@ -1,199 +1,243 @@
-import { useState, type FC } from "react";
+import React from "react";
 import type { DownloadsStore } from "../store/useDownloads";
-import type { MediaInfo, MediaFormat } from "../types";
-import { formatBytes, formatDuration } from "../lib/format";
+import type { Category } from "../types";
+import { Dialog, Field, Btn } from "./Dialog";
+import * as api from "../lib/api";
+import { formatBytes, guessCategory, filenameFromUrl } from "../lib/format";
 
-export const AddDownloadDialog: FC<{
+type Props = {
   store: DownloadsStore;
-  onClose: () => void;
   initialUrl?: string;
-}> = ({ store, onClose, initialUrl }) => {
-  const [url, setUrl] = useState(initialUrl || "");
-  const [analyzing, setAnalyzing] = useState(false);
-  const [media, setMedia] = useState<MediaInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedFormat, setSelectedFormat] = useState<string | null>(null);
-  const [threads, setThreads] = useState(8);
+  initialUrls?: string[];
+  onClose: () => void;
+};
 
-  const handleAnalyze = async () => {
-    if (!url.trim()) return;
-    setAnalyzing(true);
-    setError(null);
-    try {
-      const info = await store.analyze(url.trim());
-      setMedia(info);
-      if (info.best_formats.length > 0) {
-        setSelectedFormat(info.best_formats[0].format_id);
+export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: Props) {
+  const [url, setUrl] = React.useState(initialUrl ?? initialUrls?.[0] ?? "");
+  const [name, setName] = React.useState("");
+  const [dir, setDir] = React.useState(store.settings?.download_dir ?? "");
+  const [queue, setQueue] = React.useState("general");
+  const [category, setCategory] = React.useState("other");
+  const [connections, setConnections] = React.useState<number>(
+    store.settings?.default_threads ?? 8
+  );
+  const [description, setDescription] = React.useState("");
+  const [startNow, setStartNow] = React.useState(true);
+  const [err, setErr] = React.useState("");
+  const [probing, setProbing] = React.useState(false);
+  const [probe, setProbe] = React.useState<api.ProbeInfo | null>(null);
+  const [probeError, setProbeError] = React.useState<string | null>(null);
+
+  const queues = [
+    "general",
+    ...store.queues.filter((q) => q.name !== "general").map((q) => q.name),
+  ];
+  const allCategories = React.useMemo<Category[]>(() => {
+    const seen = new Set<string>();
+    const out: Category[] = [];
+    for (const c of store.categories) {
+      if (!seen.has(c.name)) {
+        seen.add(c.name);
+        out.push(c);
       }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setAnalyzing(false);
     }
-  };
+    return out;
+  }, [store.categories]);
 
-  const handleDownload = async () => {
+  React.useEffect(() => {
+    setProbe(null);
+    setProbeError(null);
+    if (!name) {
+      const guess = filenameFromUrl(url);
+      if (guess) setName(guess);
+    }
+    if (url) {
+      const cat = guessCategory(filenameFromUrl(url));
+      setCategory(cat);
+    }
+  }, [url]);
+
+  React.useEffect(() => {
+    const cat = allCategories.find((c) => c.name === category);
+    if (cat) {
+      if (cat.save_dir && (!dir || dir === (store.settings?.download_dir ?? ""))) {
+        setDir(cat.save_dir);
+      }
+      if (cat.queue) setQueue(cat.queue);
+    }
+  }, [category, allCategories]);
+
+  const handleProbe = async () => {
     if (!url.trim()) return;
+    setProbing(true);
+    setProbeError(null);
     try {
-      const id = await store.add({
-        url: url.trim(),
-        filename: media?.default_filename || undefined,
-        webpage_url: media?.webpage_url || undefined,
-        format_id: selectedFormat || undefined,
-        threads,
-        start_immediately: true,
-      });
-      if (id) onClose();
+      const info = await store.probeUrl(url.trim());
+      setProbe(info);
+      if (info.filename) setName(info.filename);
+      const ct = info.content_type ?? "";
+      if (ct.startsWith("video/")) setCategory("video");
+      else if (ct.startsWith("audio/")) setCategory("music");
+      else if (ct.startsWith("image/")) setCategory("images");
+      else if (ct === "application/zip" || ct.includes("compressed") || ct.includes("archive"))
+        setCategory("compressed");
+      else if (ct === "application/pdf" || ct.includes("officedocument") || ct.startsWith("text/"))
+        setCategory("documents");
     } catch (e) {
-      setError(String(e));
+      setProbeError(String(e));
+    } finally {
+      setProbing(false);
     }
   };
 
-  // Quick-add: just enqueue without analyzing
-  const handleQuickAdd = async () => {
-    if (!url.trim()) return;
+  const submit = async () => {
+    if (!url.trim()) {
+      setErr("Enter a URL to download.");
+      return;
+    }
     try {
       await store.add({
         url: url.trim(),
-        threads,
-        start_immediately: true,
+        filename: name.trim() || null,
+        save_dir: dir.trim() || null,
+        queue,
+        category,
+        max_connections: connections,
+        threads: connections,
+        description: description.trim() || null,
+        start_immediately: startNow,
       });
       onClose();
     } catch (e) {
-      setError(String(e));
+      setErr(String(e));
     }
   };
 
   return (
-    <div className="dp-backdrop fixed inset-0 z-50 flex items-center justify-center">
-      <div className="dp-pop w-[520px] max-w-[94vw] rounded-xl border border-line bg-surface p-5 shadow-lg">
-        <h2 className="mb-4 text-base font-semibold">New Download</h2>
-
-        {/* URL input */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Paste URL (video, file, stream…) and press Analyze"
+    <Dialog
+      title="Add Download"
+      onClose={onClose}
+      width={620}
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" onClick={submit}>Download</Btn>
+        </>
+      }
+    >
+      <div className="form">
+        <Field label="URL">
+          <textarea
+            className="input input--area"
+            rows={2}
+            placeholder="https://example.com/file.zip"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
-            className="min-w-0 flex-1 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-txt outline-none placeholder:text-txt-faint focus:border-accent"
+            onBlur={handleProbe}
             autoFocus
           />
+       </Field>
+
+        <div className="probe-row">
           <button
-            onClick={handleAnalyze}
-            disabled={analyzing || !url.trim()}
-            className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-text disabled:opacity-50"
+            type="button"
+            className="btn btn--default btn--sm"
+            onClick={handleProbe}
+            disabled={probing || !url.trim()}
           >
-            {analyzing ? "Analyzing…" : "Analyze"}
-          </button>
-        </div>
+            {probing ? "Probing..." : "Probe"}
+         </button>
+          {probe && (
+            <div className="probe-row__results">
+              <span className="probe-pill">
+                {probe.size > 0 ? formatBytes(probe.size) : "size unknown"}
+             </span>
+              {probe.content_type ? (
+                <span className="probe-pill">{probe.content_type}</span>
+              ) : null}
+              {probe.supports_resume ? (
+                <span className="probe-pill probe-pill--ok">resumable</span>
+              ) : null}
+           </div>
+          )}
+          {probeError ? (
+            <span className="probe-row__err">{probeError}</span>
+          ) : null}
+       </div>
 
-        {error && (
-          <div className="mt-2 rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
-            {error}
-          </div>
-        )}
-
-        {/* Media info */}
-        {media && (
-          <div className="mt-3 rounded-lg border border-line bg-surface-2 p-3">
-            <div className="flex items-start gap-3">
-              {media.thumbnail && (
-                <img
-                  src={media.thumbnail}
-                  alt=""
-                  className="h-14 w-20 rounded object-cover"
-                />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-txt" title={media.title}>
-                  {media.title}
-                </div>
-                <div className="mt-0.5 text-[11px] text-txt-dim">
-                  {media.uploader && <span>{media.uploader} · </span>}
-                  {media.duration && <span>{formatDuration(media.duration)}</span>}
-                </div>
-              </div>
-            </div>
-
-            {/* Format picker */}
-            <div className="mt-3 space-y-1">
-              <div className="text-[11px] font-medium text-txt-dim">Quality</div>
-              {media.best_formats.map((f) => (
-                <label
-                  key={f.format_id}
-                  className={`flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-xs transition-colors ${
-                    selectedFormat === f.format_id
-                      ? "border-accent bg-accent-soft"
-                      : "border-line hover:bg-surface-3"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="format"
-                    value={f.format_id}
-                    checked={selectedFormat === f.format_id}
-                    onChange={() => setSelectedFormat(f.format_id)}
-                    className="accent-accent"
-                  />
-                  <span className="min-w-14 font-medium text-txt">
-                    {f.resolution || "Audio"}
-                  </span>
-                  <span className="text-txt-dim">
-                    {f.note || f.ext}
-                  </span>
-                  <span className="ml-auto tabular-nums text-txt-faint">
-                    {f.filesize && f.filesize > 0 ? formatBytes(f.filesize) : f.ext}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Threads + download actions */}
-        <div className="mt-4 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-txt-dim">
-            <span>Threads:</span>
+        <div className="form-grid form-grid--3">
+          <Field label="Save as">
+            <input
+              className="input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="(auto from URL)"
+            />
+         </Field>
+          <Field label="Save to">
+            <input
+              className="input"
+              value={dir}
+              onChange={(e) => setDir(e.target.value)}
+              placeholder="Downloads folder"
+            />
+         </Field>
+          <Field label="Connections">
+            <input
+              type="number"
+              className="input"
+              min={1}
+              max={store.settings?.max_threads ?? 16}
+              value={connections}
+              onChange={(e) => setConnections(Math.max(1, Number(e.target.value)))}
+            />
+         </Field>
+          <Field label="Category">
             <select
-              value={threads}
-              onChange={(e) => setThreads(Number(e.target.value))}
-              className="rounded border border-line bg-surface-2 px-2 py-1 text-xs text-txt outline-none"
+              className="select"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
             >
-              {[1, 2, 4, 8, 16, 32].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
+              {allCategories.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.label || c.name}
+               </option>
               ))}
-            </select>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="rounded-md border border-line px-4 py-1.5 text-xs text-txt-dim transition-colors hover:bg-surface-2 hover:text-txt"
+           </select>
+         </Field>
+          <Field label="Queue">
+            <select
+              className="select"
+              value={queue}
+              onChange={(e) => setQueue(e.target.value)}
             >
-              Cancel
-            </button>
-            {media ? (
-              <button
-                onClick={handleDownload}
-                className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-accent-text"
-              >
-                Download
-              </button>
-            ) : (
-              <button
-                onClick={handleQuickAdd}
-                disabled={!url.trim()}
-                className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-accent-text disabled:opacity-50"
-              >
-                Add to Queue
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+              {queues.map((q) => (
+                <option key={q} value={q}>
+                  {q}
+               </option>
+              ))}
+           </select>
+         </Field>
+          <Field label="Description">
+            <input
+              className="input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="optional"
+            />
+         </Field>
+       </div>
+
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={startNow}
+            onChange={(e) => setStartNow(e.target.checked)}
+          />
+          Start download immediately
+       </label>
+        {err ? <div className="form-error">{err}</div> : null}
+     </div>
+   </Dialog>
   );
-};
+}

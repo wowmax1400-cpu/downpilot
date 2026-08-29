@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,11 +28,83 @@ pub enum YtDlpError {
     BadJson(String),
     #[error("cancelled")]
     Cancelled,
+    #[error("timed out: {0}")]
+    Timeout(String),
+    #[error("connection failed: {0}")]
+    ConnectionFailed(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
 
 pub struct YtDlp;
+
+/// Cookies from the browser extension arrive as a raw `document.cookie`
+/// header string ("a=1; b=2"). yt-dlp deprecates
+/// `--add-header "Cookie: ..."` (and scopes it oddly), so we convert it to a
+/// Netscape cookie jar and pass `--cookies <file>` instead.
+static COOKIE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn write_cookie_jar(cookies: &str, url: &str) -> Option<PathBuf> {
+    let cookies = cookies.trim();
+    if cookies.is_empty() {
+        return None;
+    }
+    let host = url
+        .splitn(3, '/')
+        .nth(2)
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("")
+        .trim_start_matches('.');
+    if host.is_empty() {
+        return None;
+    }
+    let mut body = String::from("# Netscape HTTP Cookie File\n");
+    for pair in cookies.split(';') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let (name, value) = match pair.split_once('=') {
+            Some((n, v)) => (n.trim(), v.trim()),
+            None => (pair, ""),
+        };
+        // Netscape cookie file format:
+        //   domain \t domain_specified \t path \t secure \t expiry \t name \t value
+        // `domain_specified` MUST equal whether `domain` begins with a dot:
+        //   host-only  -> "www.xx" + FALSE
+        //   domain-wide -> ".xx"     + TRUE
+        // (Python's http.cookiejar asserts this; a mismatch breaks yt-dlp.)
+        let domains = vec![
+            (host.to_string(), "FALSE"),
+            (format!(".{host}"), "TRUE"),
+        ];
+        for (d, flag) in domains {
+            body.push_str(&format!(
+                "{}\t{}\t/\tFALSE\t2147483647\t{}\t{}\n",
+                d, flag, name, value
+            ));
+        }
+    }
+    let seq = COOKIE_SEQ.fetch_add(1, Ordering::SeqCst);
+    let path = std::env::temp_dir()
+        .join(format!("downpilot-cookies-{}-{}.txt", std::process::id(), seq));
+    std::fs::write(&path, body).ok()?;
+    Some(path)
+}
+
+/// Deletes any temp cookie jars it holds when dropped (covers early returns).
+struct CookieFiles(Vec<PathBuf>);
+impl Drop for CookieFiles {
+    fn drop(&mut self) {
+        for p in &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
 
 impl YtDlp {
     pub fn is_available() -> bool {
@@ -53,13 +125,15 @@ impl YtDlp {
             cmd.arg("--proxy").arg(p);
         }
         if let Some(c) = &opts.cookies {
-            cmd.arg("--add-header").arg(format!("Cookie: {c}"));
+            if let Some(jar) = write_cookie_jar(c, url) {
+                cmd.arg("--cookies").arg(&jar);
+            }
         }
         if let Some(ua) = &opts.user_agent {
             cmd.arg("--user-agent").arg(ua);
         }
         if let Some(r) = &opts.referer {
-            cmd.arg("--add-header").arg(format!("Referer: {r}"));
+            cmd.arg("--referer").arg(r);
         }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         // If the probe future is dropped (e.g. the 60s timeout below fires),
@@ -113,13 +187,21 @@ impl YtDlp {
             cmd.arg("--proxy").arg(p);
         }
         if let Some(r) = referer {
-            cmd.arg("--add-header").arg(format!("Referer: {r}"));
+            cmd.arg("--referer").arg(r);
         }
         if let Some(ua) = user_agent {
             cmd.arg("--user-agent").arg(ua);
         }
+        let _cookie_guard;
         if let Some(c) = cookies {
-            cmd.arg("--add-header").arg(format!("Cookie: {c}"));
+            if let Some(jar) = write_cookie_jar(c, url) {
+                cmd.arg("--cookies").arg(&jar);
+                _cookie_guard = CookieFiles(vec![jar]);
+            } else {
+                _cookie_guard = CookieFiles(vec![]);
+            }
+        } else {
+            _cookie_guard = CookieFiles(vec![]);
         }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| {

@@ -177,6 +177,270 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allow all DownPilot download-engine commands\n#### This permission set includes:\n\n- `allow-list-downloads`\n- `allow-add-download`\n- `allow-pause-download`\n- `allow-resume-download`\n- `allow-cancel-download`\n- `allow-remove-download`\n- `allow-analyze-url`\n- `allow-get-settings`\n- `allow-set-setting`\n- `allow-get-default-dir`\n- `allow-open-in-file-manager`\n- `allow-open-file`\n- `allow-grab-site`\n- `allow-list-queues`\n- `allow-create-queue`\n- `allow-update-queue`\n- `allow-delete-queue`\n- `allow-list-sites`\n- `allow-save-site`\n- `allow-delete-site`\n- `allow-list-schedules`\n- `allow-save-schedule`\n- `allow-delete-schedule`\n- `allow-list-categories`\n- `allow-save-category`\n- `allow-delete-category`\n- `allow-resume-all`\n- `allow-pause-all`\n- `allow-stop-all`\n- `allow-retry-all`\n- `allow-redownload`\n- `allow-move-to-queue`\n- `allow-set-category`\n- `allow-rename-download`\n- `allow-set-save-dir`\n- `allow-set-description`\n- `allow-recheck-download`\n- `allow-delete-file`\n- `allow-remove-keep-file`\n- `allow-export-downloads`\n- `allow-import-downloads`\n- `allow-clear-finished`\n- `allow-set-queue-speed`",
+          "type": "string",
+          "const": "downpilot-commands",
+          "markdownDescription": "Allow all DownPilot download-engine commands\n#### This permission set includes:\n\n- `allow-list-downloads`\n- `allow-add-download`\n- `allow-pause-download`\n- `allow-resume-download`\n- `allow-cancel-download`\n- `allow-remove-download`\n- `allow-analyze-url`\n- `allow-get-settings`\n- `allow-set-setting`\n- `allow-get-default-dir`\n- `allow-open-in-file-manager`\n- `allow-open-file`\n- `allow-grab-site`\n- `allow-list-queues`\n- `allow-create-queue`\n- `allow-update-queue`\n- `allow-delete-queue`\n- `allow-list-sites`\n- `allow-save-site`\n- `allow-delete-site`\n- `allow-list-schedules`\n- `allow-save-schedule`\n- `allow-delete-schedule`\n- `allow-list-categories`\n- `allow-save-category`\n- `allow-delete-category`\n- `allow-resume-all`\n- `allow-pause-all`\n- `allow-stop-all`\n- `allow-retry-all`\n- `allow-redownload`\n- `allow-move-to-queue`\n- `allow-set-category`\n- `allow-rename-download`\n- `allow-set-save-dir`\n- `allow-set-description`\n- `allow-recheck-download`\n- `allow-delete-file`\n- `allow-remove-keep-file`\n- `allow-export-downloads`\n- `allow-import-downloads`\n- `allow-clear-finished`\n- `allow-set-queue-speed`"
+        },
+        {
+          "description": "Allow adding a new download",
+          "type": "string",
+          "const": "allow-add-download",
+          "markdownDescription": "Allow adding a new download"
+        },
+        {
+          "description": "Allow analyzing a media URL (yt-dlp probe)",
+          "type": "string",
+          "const": "allow-analyze-url",
+          "markdownDescription": "Allow analyzing a media URL (yt-dlp probe)"
+        },
+        {
+          "description": "Allow cancelling a download",
+          "type": "string",
+          "const": "allow-cancel-download",
+          "markdownDescription": "Allow cancelling a download"
+        },
+        {
+          "description": "Allow clearing finished downloads",
+          "type": "string",
+          "const": "allow-clear-finished",
+          "markdownDescription": "Allow clearing finished downloads"
+        },
+        {
+          "description": "Allow creating a download queue",
+          "type": "string",
+          "const": "allow-create-queue",
+          "markdownDescription": "Allow creating a download queue"
+        },
+        {
+          "description": "Allow deleting a category",
+          "type": "string",
+          "const": "allow-delete-category",
+          "markdownDescription": "Allow deleting a category"
+        },
+        {
+          "description": "Allow deleting a downloaded file",
+          "type": "string",
+          "const": "allow-delete-file",
+          "markdownDescription": "Allow deleting a downloaded file"
+        },
+        {
+          "description": "Allow deleting a download queue",
+          "type": "string",
+          "const": "allow-delete-queue",
+          "markdownDescription": "Allow deleting a download queue"
+        },
+        {
+          "description": "Allow deleting a schedule",
+          "type": "string",
+          "const": "allow-delete-schedule",
+          "markdownDescription": "Allow deleting a schedule"
+        },
+        {
+          "description": "Allow deleting a site rule",
+          "type": "string",
+          "const": "allow-delete-site",
+          "markdownDescription": "Allow deleting a site rule"
+        },
+        {
+          "description": "Allow exporting the download list",
+          "type": "string",
+          "const": "allow-export-downloads",
+          "markdownDescription": "Allow exporting the download list"
+        },
+        {
+          "description": "Allow reading the default download directory",
+          "type": "string",
+          "const": "allow-get-default-dir",
+          "markdownDescription": "Allow reading the default download directory"
+        },
+        {
+          "description": "Allow reading app settings",
+          "type": "string",
+          "const": "allow-get-settings",
+          "markdownDescription": "Allow reading app settings"
+        },
+        {
+          "description": "Allow grabbing downloadable links from a page",
+          "type": "string",
+          "const": "allow-grab-site",
+          "markdownDescription": "Allow grabbing downloadable links from a page"
+        },
+        {
+          "description": "Allow importing a download list",
+          "type": "string",
+          "const": "allow-import-downloads",
+          "markdownDescription": "Allow importing a download list"
+        },
+        {
+          "description": "Allow listing categories",
+          "type": "string",
+          "const": "allow-list-categories",
+          "markdownDescription": "Allow listing categories"
+        },
+        {
+          "description": "Allow listing all downloads",
+          "type": "string",
+          "const": "allow-list-downloads",
+          "markdownDescription": "Allow listing all downloads"
+        },
+        {
+          "description": "Allow listing download queues",
+          "type": "string",
+          "const": "allow-list-queues",
+          "markdownDescription": "Allow listing download queues"
+        },
+        {
+          "description": "Allow listing schedules",
+          "type": "string",
+          "const": "allow-list-schedules",
+          "markdownDescription": "Allow listing schedules"
+        },
+        {
+          "description": "Allow listing site rules",
+          "type": "string",
+          "const": "allow-list-sites",
+          "markdownDescription": "Allow listing site rules"
+        },
+        {
+          "description": "Allow moving a download to a queue",
+          "type": "string",
+          "const": "allow-move-to-queue",
+          "markdownDescription": "Allow moving a download to a queue"
+        },
+        {
+          "description": "Allow opening a downloaded file with the OS default handler",
+          "type": "string",
+          "const": "allow-open-file",
+          "markdownDescription": "Allow opening a downloaded file with the OS default handler"
+        },
+        {
+          "description": "Allow opening a path in the file manager",
+          "type": "string",
+          "const": "allow-open-in-file-manager",
+          "markdownDescription": "Allow opening a path in the file manager"
+        },
+        {
+          "description": "Allow pausing all downloads",
+          "type": "string",
+          "const": "allow-pause-all",
+          "markdownDescription": "Allow pausing all downloads"
+        },
+        {
+          "description": "Allow pausing a download",
+          "type": "string",
+          "const": "allow-pause-download",
+          "markdownDescription": "Allow pausing a download"
+        },
+        {
+          "description": "Allow re-checking a download's existing data",
+          "type": "string",
+          "const": "allow-recheck-download",
+          "markdownDescription": "Allow re-checking a download's existing data"
+        },
+        {
+          "description": "Allow re-downloading a file",
+          "type": "string",
+          "const": "allow-redownload",
+          "markdownDescription": "Allow re-downloading a file"
+        },
+        {
+          "description": "Allow removing a download from the list",
+          "type": "string",
+          "const": "allow-remove-download",
+          "markdownDescription": "Allow removing a download from the list"
+        },
+        {
+          "description": "Allow removing a download record but keeping the file",
+          "type": "string",
+          "const": "allow-remove-keep-file",
+          "markdownDescription": "Allow removing a download record but keeping the file"
+        },
+        {
+          "description": "Allow renaming a download",
+          "type": "string",
+          "const": "allow-rename-download",
+          "markdownDescription": "Allow renaming a download"
+        },
+        {
+          "description": "Allow resuming all downloads",
+          "type": "string",
+          "const": "allow-resume-all",
+          "markdownDescription": "Allow resuming all downloads"
+        },
+        {
+          "description": "Allow resuming a download",
+          "type": "string",
+          "const": "allow-resume-download",
+          "markdownDescription": "Allow resuming a download"
+        },
+        {
+          "description": "Allow retrying all failed downloads",
+          "type": "string",
+          "const": "allow-retry-all",
+          "markdownDescription": "Allow retrying all failed downloads"
+        },
+        {
+          "description": "Allow saving a category",
+          "type": "string",
+          "const": "allow-save-category",
+          "markdownDescription": "Allow saving a category"
+        },
+        {
+          "description": "Allow saving a schedule",
+          "type": "string",
+          "const": "allow-save-schedule",
+          "markdownDescription": "Allow saving a schedule"
+        },
+        {
+          "description": "Allow saving a site rule",
+          "type": "string",
+          "const": "allow-save-site",
+          "markdownDescription": "Allow saving a site rule"
+        },
+        {
+          "description": "Allow setting a download's category",
+          "type": "string",
+          "const": "allow-set-category",
+          "markdownDescription": "Allow setting a download's category"
+        },
+        {
+          "description": "Allow setting a download's description",
+          "type": "string",
+          "const": "allow-set-description",
+          "markdownDescription": "Allow setting a download's description"
+        },
+        {
+          "description": "Allow setting a per-queue speed limit",
+          "type": "string",
+          "const": "allow-set-queue-speed",
+          "markdownDescription": "Allow setting a per-queue speed limit"
+        },
+        {
+          "description": "Allow changing a download's save directory",
+          "type": "string",
+          "const": "allow-set-save-dir",
+          "markdownDescription": "Allow changing a download's save directory"
+        },
+        {
+          "description": "Allow writing a single app setting",
+          "type": "string",
+          "const": "allow-set-setting",
+          "markdownDescription": "Allow writing a single app setting"
+        },
+        {
+          "description": "Allow stopping all downloads",
+          "type": "string",
+          "const": "allow-stop-all",
+          "markdownDescription": "Allow stopping all downloads"
+        },
+        {
+          "description": "Allow updating a download queue",
+          "type": "string",
+          "const": "allow-update-queue",
+          "markdownDescription": "Allow updating a download queue"
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

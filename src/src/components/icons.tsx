@@ -1,198 +1,373 @@
-import type { SVGProps } from "react";
+// Compact, monochrome icon set for the IDM-style desktop UI.
+// All icons accept size/className; drawn with currentColor so they
+// inherit text color (and theme accent where appropriate).
 
-type IconProps = SVGProps<SVGSVGElement>;
+import React from "react";
 
-function base(props: IconProps) {
-  return {
-    xmlns: "http://www.w3.org/2000/svg",
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 2,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    ...props,
-  };
-}
+type P = { size?: number; className?: string };
 
-export const SearchIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <circle cx="11" cy="11" r="8" />
-    <path d="m21 21-4.35-4.35" />
-  </svg>
-);
+const base = (size: number): React.SVGProps<SVGSVGElement> => ({
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.8,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+});
 
-export const PlusIcon = (p: IconProps) => (
-  <svg {...base(p)}>
+export const IconAdd = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
     <path d="M12 5v14M5 12h14" />
   </svg>
 );
-
-export const PaletteIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 3-3 3h-2a3 3 0 0 0-3 3c0 .6.2 1 .5 1.5.3.5.5 1 .5 1.5a2 2 0 0 1-2 2Z" />
-    <circle cx="7.5" cy="11.5" r="1" fill="currentColor" />
-    <circle cx="10.5" cy="7.5" r="1" fill="currentColor" />
-    <circle cx="15" cy="7.5" r="1" fill="currentColor" />
-    <circle cx="17.5" cy="11.5" r="1" fill="currentColor" />
+export const IconStart = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M6 4l14 8-14 8V4z" fill="currentColor" stroke="none" />
   </svg>
 );
-
-export const PauseIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <rect x="6" y="4" width="4" height="16" rx="1.5" fill="currentColor" stroke="none" />
-    <rect x="14" y="4" width="4" height="16" rx="1.5" fill="currentColor" stroke="none" />
+export const IconResume = IconStart;
+export const IconPause = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <rect x="6" y="5" width="4" height="14" fill="currentColor" stroke="none" />
+    <rect x="14" y="5" width="4" height="14" fill="currentColor" stroke="none" />
   </svg>
 );
-
-export const PlayIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M6 4.5v15a1 1 0 0 0 1.53.85l12-7.5a1 1 0 0 0 0-1.7l-12-7.5A1 1 0 0 0 6 4.5Z" fill="currentColor" stroke="none" />
+export const IconStop = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <rect x="6" y="6" width="12" height="12" fill="currentColor" stroke="none" />
   </svg>
 );
-
-export const XIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M18 6 6 18M6 6l12 12" />
+export const IconDelete = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
   </svg>
 );
-
-export const TrashIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M3 6h18" />
-    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-    <path d="M10 11v6M14 11v6" />
+export const IconRedownload = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 12a9 9 0 1 1 3 6.7" />
+    <path d="M3 19v-5h5" />
   </svg>
 );
-
-export const FolderOpenIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    <path d="M2 10h20" />
+export const IconRetry = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M21 12a9 9 0 1 1-3-6.7" />
+    <path d="M21 4v5h-5" />
   </svg>
 );
-
-export const GearIcon = (p: IconProps) => (
-  <svg {...base(p)}>
+export const IconOptions = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
     <circle cx="12" cy="12" r="3" />
-    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" />
   </svg>
 );
-
-export const ChevronLeftIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="m15 18-6-6 6-6" />
+export const IconScheduler = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 7v5l3 2" />
   </svg>
 );
-
-export const ChevronRightIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="m9 18 6-6-6-6" />
+export const IconQueue = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 6h12M4 12h12M4 18h12" />
+    <path d="M18 9l3 3-3 3" />
   </svg>
 );
-
-export const ChevronDownIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="m6 9 6 6 6-6" />
+export const IconGrabber = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="11" cy="11" r="6" />
+    <path d="M20 20l-4-4" />
   </svg>
 );
-
-export const DownloadIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M12 3v12" />
-    <path d="m7 10 5 5 5-5" />
-    <path d="M5 21h14" />
-  </svg>
-);
-
-export const ArrowDownCircleIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <circle cx="12" cy="12" r="10" />
-    <path d="m8 12 4 4 4-4" />
-    <path d="M12 8v8" />
-  </svg>
-);
-
-export const CheckCircleIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <circle cx="12" cy="12" r="10" />
-    <path d="m9 12 2 2 4-4" />
-  </svg>
-);
-
-export const PauseCircleIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <circle cx="12" cy="12" r="10" />
-    <path d="M10 8v8M14 8v8" />
-  </svg>
-);
-
-export const FilmIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <rect x="2" y="4" width="20" height="16" rx="2" />
-    <path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5" />
-  </svg>
-);
-
-export const MusicIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M9 18V5l12-2v13" />
-    <circle cx="6" cy="18" r="3" />
-    <circle cx="18" cy="16" r="3" />
-  </svg>
-);
-
-export const ArchiveIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <rect x="2" y="3" width="20" height="5" rx="1" />
-    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
-    <path d="M10 12h4" />
-  </svg>
-);
-
-export const FileTextIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2Z" />
-    <path d="M14 2v6h6" />
-    <path d="M9 13h6M9 17h6" />
-  </svg>
-);
-
-export const CpuIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <rect x="4" y="4" width="16" height="16" rx="2" />
-    <rect x="9" y="9" width="6" height="6" />
-    <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
-  </svg>
-);
-
-export const FolderIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-  </svg>
-);
-
-export const GaugeIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="m12 14 4-4" />
-    <path d="M3.34 19a10 10 0 1 1 17.32 0" />
-  </svg>
-);
-
-export const LayoutGridIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <rect x="3" y="3" width="7" height="7" rx="1.5" />
-    <rect x="14" y="3" width="7" height="7" rx="1.5" />
-    <rect x="14" y="14" width="7" height="7" rx="1.5" />
-    <rect x="3" y="14" width="7" height="7" rx="1.5" />
-  </svg>
-);
-
-export const GlobeIcon = (p: IconProps) => (
-  <svg {...base(p)}>
+export const IconSite = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
     <circle cx="12" cy="12" r="9" />
-    <path d="M3 12h18" />
-    <path d="M12 3c2.5 2.5 3.8 5.6 3.8 9S14.5 18.5 12 21c-2.5-2.5-3.8-5.6-3.8-9S9.5 5.5 12 3Z" />
+    <path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" />
   </svg>
 );
+export const IconCategory = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 5h7v7H4zM13 5h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />
+  </svg>
+);
+export const IconSettings = IconOptions;
+export const IconRefresh = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M20 11a8 8 0 0 0-14-5M4 4v4h4" />
+    <path d="M4 13a8 8 0 0 0 14 5M20 20v-4h-4" />
+  </svg>
+);
+export const IconSearch = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="11" cy="11" r="6" />
+    <path d="M20 20l-4-4" />
+  </svg>
+);
+export const IconClipboard = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <rect x="6" y="4" width="12" height="17" rx="2" />
+    <path d="M9 4V3h6v1" />
+  </svg>
+);
+export const IconFolder = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+  </svg>
+);
+export const IconFile = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+  </svg>
+);
+export const IconProperties = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 5h16M4 12h16M4 19h16" />
+    <circle cx="8" cy="5" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="19" r="1.4" fill="currentColor" stroke="none" />
+  </svg>
+);
+export const IconSpeed = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 17a9 9 0 0 1 18 0" />
+    <path d="M12 17l5-6" />
+  </svg>
+);
+export const IconClose = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+export const IconMenu = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 6h16M4 12h16M4 18h16" />
+  </svg>
+);
+export const IconChevron = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M9 6l6 6-6 6" />
+  </svg>
+);
+export const IconBolt = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" fill="currentColor" stroke="none" />
+  </svg>
+);
+export const IconBatch = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 6h10M4 12h10M4 18h10" />
+    <path d="M18 8v8M14 12h8" />
+  </svg>
+);
+export const IconCheck = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M5 12l5 5L20 6" />
+  </svg>
+);
+export const IconWarning = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M12 3l10 17H2L12 3z" />
+    <path d="M12 9v5M12 17h.01" />
+  </svg>
+);
+export const IconPauseAll = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <rect x="4" y="5" width="5" height="14" fill="currentColor" stroke="none" />
+    <rect x="11" y="5" width="5" height="14" fill="currentColor" stroke="none" />
+    <path d="M3 3l18 18" />
+  </svg>
+);
+export const IconStopAll = IconPauseAll;
+export const IconPlay = IconStart;
+
+// IDM-specific icons (extra toolbar + context-menu glyphs).
+export const IconForceStart = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M5 4l14 8-14 8V4z" fill="currentColor" stroke="none" />
+    <path d="M19 4l-3 8 3 8" />
+  </svg>
+);
+export const IconOpenFile = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    <path d="M9 13l6-3-6 3 6 3-6-3z" fill="currentColor" stroke="none" />
+  </svg>
+);
+export const IconDeleteAll = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 6h14M5 6V4h10v2M6 6l1 13h8l1-13" />
+    <path d="M9 10v6M13 10v6" />
+  </svg>
+);
+export const IconCopy = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <rect x="8" y="8" width="12" height="12" />
+    <path d="M16 8V4H4v12h4" />
+  </svg>
+);
+
+// ---------------------------------------------------------------------------
+// File-type / category icons (IDM-style: file with a small label badge).
+// Filled for visual mass; currentColor for theme tinting.
+// ---------------------------------------------------------------------------
+
+type FP = { size?: number; className?: string; filled?: boolean };
+
+function fileBase(size: number, filled = false): React.SVGProps<SVGSVGElement> {
+  return {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: filled ? "currentColor" : "none",
+    stroke: "currentColor",
+    strokeWidth: 1.4,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+}
+
+// Per-type color for file icons. Helps distinguish types at small sizes
+// (the small inner glyphs get lost below 16px).
+export const FILE_ICON_COLOR: Record<string, string> = {
+  generic: "text-slate-400",
+  video: "text-rose-400",
+  audio: "text-fuchsia-400",
+  archive: "text-amber-400",
+  document: "text-sky-400",
+  program: "text-emerald-400",
+  image: "text-violet-400",
+  disk: "text-orange-400",
+};
+
+export const FileIconGeneric = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+  </svg>
+);
+
+export const FileIconVideo = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    {/* Filled play triangle - bigger so it reads at 16px */}
+    <path d="M9 9.5l7 3.5-7 3.5z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const FileIconAudio = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    {/* Quarter notes */}
+    <circle cx="10" cy="16" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M11.4 16V10l4-1v6" />
+    <circle cx="15" cy="15" r="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const FileIconArchive = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    {/* Box with cross-tape */}
+    <rect x="8" y="11" width="8" height="7" />
+    <path d="M8 14h8M12 11v7" />
+  </svg>
+);
+
+export const FileIconDocument = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    {/* Page lines */}
+    <path d="M9 11h6M9 14h6M9 17h4" />
+  </svg>
+);
+
+export const FileIconProgram = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    {/* Gear / cog */}
+    <circle cx="12" cy="14" r="2.5" fill="currentColor" stroke="none" />
+    <path d="M12 9.5v1.5M14 10.5l1-1M14.5 14h1.5M14 17.5l1 1M12 18.5V20M10 17.5l-1 1M9.5 14H8M10 10.5l-1-1" />
+  </svg>
+);
+
+export const FileIconImage = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    <rect x="8" y="12" width="8" height="6" />
+    <circle cx="10" cy="14" r="0.8" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const FileIconDisk = ({ size = 16, className }: FP) => (
+  <svg {...fileBase(size)} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    <circle cx="12" cy="14" r="2.4" />
+    <circle cx="12" cy="14" r="0.7" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+/**
+ * Map a filename + category to the right file-type icon.
+ * Order of preference: explicit category (video/audio/compressed/documents/
+ * programs) then extension-based fallback.
+ */
+export type FileIconKey =
+  | "generic"
+  | "video"
+  | "audio"
+  | "archive"
+  | "document"
+  | "program"
+  | "image"
+  | "disk";
+
+export interface FileIconResult {
+  Icon: (p: { size?: number; className?: string }) => JSX.Element;
+  color: string; // tailwind class
+  key: FileIconKey;
+}
+
+function pick(key: FileIconKey): FileIconResult {
+  const map: Record<FileIconKey, FileIconResult["Icon"]> = {
+    generic: FileIconGeneric,
+    video: FileIconVideo,
+    audio: FileIconAudio,
+    archive: FileIconArchive,
+    document: FileIconDocument,
+    program: FileIconProgram,
+    image: FileIconImage,
+    disk: FileIconDisk,
+  };
+  return { Icon: map[key], color: FILE_ICON_COLOR[key], key };
+}
+
+export function fileIconFor(filename: string, category?: string | null): FileIconResult {
+  const cat = (category ?? "").toLowerCase();
+  if (cat === "video") return pick("video");
+  if (cat === "music" || cat === "audio") return pick("audio");
+  if (cat === "compressed") return pick("archive");
+  if (cat === "documents") return pick("document");
+  if (cat === "programs") return pick("program");
+  const lower = filename.toLowerCase();
+  // Compound extensions first (e.g. .tar.gz, .tar.xz, .tar.bz2).
+  if (/\.tar\.(gz|xz|bz2|zst)$/.test(lower)) return pick("archive");
+  const ext = lower.replace(/.*\./, "");
+  if (/^(mp4|mkv|webm|mov|avi|flv|wmv|mpg|mpeg|m4v|ts)$/.test(ext)) return pick("video");
+  if (/^(mp3|flac|wav|ogg|m4a|aac|opus|wma)$/.test(ext)) return pick("audio");
+  if (/^(zip|rar|7z|tar|gz|bz2|xz|iso|img|dmg)$/.test(ext)) return pick("archive");
+  if (/^(pdf|doc|docx|odt|rtf|txt|md|epub|mobi|html|htm|css|js|ts|tsx|jsx|json|xml|yml|yaml)$/.test(ext)) return pick("document");
+  if (/^(exe|msi|deb|rpm|apk|appimage|run|sh|bat|jar|py|bin|app)$/.test(ext)) return pick("program");
+  if (/^(iso|img|dmg)$/.test(ext)) return pick("disk");
+  if (/^(jpg|jpeg|png|gif|webp|bmp|svg|ico)$/.test(ext)) return pick("image");
+  return pick("generic");
+}

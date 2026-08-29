@@ -3,6 +3,7 @@
 //! that fans events out to any UI layer (Tauri events or the native messaging
 //! socket).
 
+pub mod credentials;
 pub mod db;
 pub mod download;
 pub mod engine;
