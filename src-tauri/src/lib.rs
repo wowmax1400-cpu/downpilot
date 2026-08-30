@@ -32,6 +32,40 @@ async fn add_download(state: State<'_, AppState>, nd: NewDownload) -> Result<i64
     state.manager.add(nd).await
 }
 
+/// Phase 3C: insert many downloads in a single round-trip. Used by the
+/// Batch dialog when the user pastes a list of URLs and clicks
+/// "Download Selected". Each row is reported independently — a single
+/// malformed URL does not abort the rest.
+#[tauri::command]
+async fn add_downloads_batch(
+    state: State<'_, AppState>,
+    nds: Vec<NewDownload>,
+) -> Result<Vec<Result<i64, String>>, String> {
+    Ok(state.manager.add_batch(nds).await)
+}
+
+/// Phase 3C: precheck helper. Returns the id of the most recent row
+/// matching `url`, or `None` if no row matches. The Batch dialog uses
+/// this to highlight rows that are already in the table before the
+/// user clicks "Download Selected".
+#[tauri::command]
+fn find_existing_download_by_url(
+    state: State<'_, AppState>,
+    url: String,
+) -> Option<i64> {
+    state.manager.db.find_by_url(&url).ok().flatten()
+}
+
+/// Phase 3C: same but returns the count (for "this URL is in the
+/// table N times" indicators).
+#[tauri::command]
+fn count_existing_downloads_by_url(
+    state: State<'_, AppState>,
+    url: String,
+) -> i64 {
+    state.manager.db.count_by_url(&url).unwrap_or(0)
+}
+
 #[tauri::command]
 fn pause_download(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     state.manager.pause(id)
@@ -257,13 +291,35 @@ fn set_save_dir(state: State<'_, AppState>, id: i64, dir: String) -> Result<(), 
 }
 
 #[tauri::command]
+fn set_proxy_url(state: State<'_, AppState>, id: i64, proxy_url: Option<String>) -> Result<(), String> {
+    state.manager.set_proxy_url(id, proxy_url.as_deref())
+}
+
+#[tauri::command]
 fn set_description(state: State<'_, AppState>, id: i64, description: String) -> Result<(), String> {
     state.manager.set_description(id, &description)
 }
 
 #[tauri::command]
+fn set_expected_sha256(
+    state: State<'_, AppState>,
+    id: i64,
+    value: Option<String>,
+) -> Result<(), String> {
+    state.manager.set_expected_sha256(id, value.as_deref())
+}
+
+#[tauri::command]
 fn recheck_download(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     state.manager.recheck(id)
+}
+
+#[tauri::command]
+fn verify_checksum(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<downpilot_core::models::ChecksumResult, String> {
+    state.manager.verify_checksum(id)
 }
 
 #[tauri::command]
@@ -400,6 +456,61 @@ fn stop_queue(state: State<'_, AppState>, queue: String) -> Result<usize, String
     state.manager.stop_queue(&queue)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3B: queue orchestration commands
+// ---------------------------------------------------------------------------
+
+/// Force Start a single download. The task is promoted out of `Queued`
+/// immediately, bypassing the normal precedence sort — but global and
+/// per-queue concurrency caps are still honoured. See `engine::force_start`
+/// for the full semantics.
+#[tauri::command]
+fn force_start_download(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.manager.force_start(id)
+}
+
+/// Set a download's priority (High=+10, Normal=0, Low=-10). Persisted via
+/// `Db::set_priority` so the change survives a restart.
+#[tauri::command]
+fn set_download_priority(
+    state: State<'_, AppState>,
+    id: i64,
+    priority: i32,
+) -> Result<(), String> {
+    state.manager.set_download_priority(id, priority)
+}
+
+/// Move a queue up (`-1`) or down (`+1`) in the ordering. The queue's
+/// `priority` integer is swapped with its neighbour so the relative
+/// order matches what the user sees in the panel.
+#[tauri::command]
+fn reorder_queue(
+    state: State<'_, AppState>,
+    name: String,
+    direction: i32,
+) -> Result<(), String> {
+    state.manager.reorder_queue(&name, direction)
+}
+
+/// Move a queue to the absolute top or bottom of the ordering.
+#[tauri::command]
+fn move_queue_to(
+    state: State<'_, AppState>,
+    name: String,
+    position: String,
+) -> Result<(), String> {
+    state.manager.move_queue_to(&name, &position)
+}
+
+/// Live snapshot of the scheduler. Used by the status bar and the queue
+/// details panel to render "Active profile", "Waiting for schedule",
+/// "Configured: X · Scheduled: Y · Current: Z" without re-running the
+/// precedence sort on the frontend.
+#[tauri::command]
+fn scheduler_status(state: State<'_, AppState>) -> downpilot_core::models::SchedulerStatus {
+    state.manager.scheduler_status()
+}
+
 #[tauri::command]
 fn copy_text_to_clipboard(_state: State<'_, AppState>, text: String) -> Result<(), String> {
     // Reuse the same wl-paste/xclip pipeline in reverse: spawn `wl-copy`
@@ -479,12 +590,10 @@ fn test_queue_credential(
     // without exposing the value to the UI. The UI shows a single
     // "Tested OK" / "Not configured" badge.
     let configured = state.creds.is_configured(&queue);
-    let has_value = configured
-        && state
-            .creds
-            .get(&queue)
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
+    let has_value = match state.creds.get(&queue) {
+        Ok(s) => !s.is_empty(),
+        Err(_) => false,
+    };
     serde_json::json!({
         "configured": configured,
         "valid": has_value,
@@ -799,6 +908,7 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 referer,
                 user_agent,
                 cookies,
+                proxy_url: None,
                 expected_sha256: None,
                 category: None,
                 queue: None,
@@ -810,6 +920,7 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 checksum_algorithm: None,
                 on_complete: None,
                 start_immediately: true,
+                priority: None,
                 browser_dedup_id: String::new(),
                 skip_probe: false,
             };
@@ -906,6 +1017,7 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 referer,
                 user_agent,
                 cookies,
+                proxy_url: None,
                 expected_sha256: None,
                 category,
                 queue,
@@ -917,6 +1029,7 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 checksum_algorithm: None,
                 on_complete: None,
                 start_immediately: true,
+                priority: None,
                 browser_dedup_id: browser_id,
                 skip_probe: try_download_anyway,
             };
@@ -1020,7 +1133,62 @@ NmhMessage::Config => {
 
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance plugin: if a second `downpilot` process launches
+        // (e.g. a `downpilot <url>` from the terminal, or a `downpilot://...`
+        // click), the first instance gets the new argv via this callback
+        // and the second process exits silently. Without this, two app
+        // instances would race on the same SQLite DB and the same part-files
+        // directory.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            handle_external_launch(app, &argv);
+        }))
+        // Deep-link plugin: registers the `downpilot://` URL scheme so the
+        // OS hands matching URLs to us instead of opening a browser.
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .setup(|app| {
+            // Tray icon. Built-in to Tauri 2 via the `tray-icon` feature;
+            // no extra plugin needed. The `image-png` feature on the tauri
+            // crate is required to load the .png icon at runtime.
+            //
+            // Closing the main window hides it instead of exiting; clicking
+            // the tray icon toggles the window. Together with
+            // `tauri-plugin-single-instance` this means downloads keep
+            // running after the user closes the window — IDM-style.
+            if let Err(e) = build_tray(app.handle()) {
+                eprintln!("tray init failed: {e}");
+            }
+
+            // Register the `downpilot://` URL scheme at runtime in dev mode
+            // (the .deb/.rpm install does this via the .desktop file we ship
+            // through `tauri.conf.json` bundle.fileAssociations). Without
+            // this, `downpilot <url>` works in dev only.
+            #[cfg(debug_assertions)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    eprintln!("deep-link register failed: {e}");
+                }
+            }
+
+            // Subscribe to deep-link events at runtime so a `downpilot://add?url=...`
+            // click after install is routed into the Add dialog.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let app_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        if let Err(e) = route_deep_link(&app_handle, url.as_str()) {
+                            eprintln!("deep-link route failed: {e}");
+                        }
+                    }
+                });
+            }
+
             let data_dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&data_dir).ok();
             let db_path = data_dir.join("downpilot.db");
@@ -1029,6 +1197,10 @@ pub fn run() {
 
             let (manager, rx) = DownloadManager::new(&db_path, parts_dir);
             let creds = Arc::new(downpilot_core::credentials::CredentialStore::new(&data_dir));
+            // Hand the SAME credential store to the downloader so per-queue
+            // auth headers are resolved from the real store (not a stub).
+            // Must happen before any download starts.
+            manager.set_credentials(creds.clone());
             let (sink, mut sink_rx) = mpsc::unbounded_channel();
             // pump_loop spawns tokio tasks internally, so it must run on
             // Tauri's async runtime (setup runs on the main thread).
@@ -1069,6 +1241,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_downloads,
             add_download,
+            add_downloads_batch,
+            find_existing_download_by_url,
+            count_existing_downloads_by_url,
             pause_download,
             resume_download,
             cancel_download,
@@ -1103,8 +1278,11 @@ pub fn run() {
             set_category,
             rename_download,
             set_save_dir,
+            set_proxy_url,
             set_description,
+            set_expected_sha256,
             recheck_download,
+            verify_checksum,
             delete_file,
             remove_keep_file,
             export_downloads,
@@ -1115,6 +1293,11 @@ pub fn run() {
             resume_queue,
             pause_queue,
             stop_queue,
+            force_start_download,
+            set_download_priority,
+            reorder_queue,
+            move_queue_to,
+            scheduler_status,
             probe_url,
             read_url_file,
             copy_text_to_clipboard,
@@ -1132,6 +1315,186 @@ pub fn run() {
 // Keep EngineEvent import used (forwarder task type annotation).
 #[allow(unused)]
 fn _typecheck(_: &mut mpsc::UnboundedReceiver<EngineEvent>) {}
+
+
+// ---------------------------------------------------------------------------
+// Phase 1: tray icon, single-instance, deep-link helpers
+// ---------------------------------------------------------------------------
+
+/// Build the system tray icon and menu. The window-close handler is patched
+/// to hide the window instead of exiting, so downloads keep running.
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
+    let pause_all = MenuItem::with_id(app, "pause_all", "Pause all", true, None::<&str>)?;
+    let resume_all = MenuItem::with_id(app, "resume_all", "Resume all", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit DownPilot", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &pause_all, &resume_all, &quit])?;
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(app.default_window_icon().cloned().ok_or_else(|| {
+            tauri::Error::AssetNotFound("default window icon".into())
+        })?)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                    let _ = win.unminimize();
+                }
+            }
+            "pause_all" => {
+                let _ = app.emit("tray://pause_all", ());
+            }
+            "resume_all" => {
+                let _ = app.emit("tray://resume_all", ());
+            }
+            "quit" => {
+                // Emit a quit signal so the frontend can flush state, then exit.
+                let _ = app.emit("tray://quit", ());
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Left-click toggles the window. Right-click shows the menu by
+            // default (handled by Tauri's built-in menu binding on Linux).
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(win) = app.get_webview_window("main") {
+                    let visible = win.is_visible().unwrap_or(false);
+                    let minimized = win.is_minimized().unwrap_or(false);
+                    if visible && !minimized {
+                        let _ = win.hide();
+                    } else {
+                        let _ = win.show();
+                        let _ = win.unminimize();
+                        let _ = win.set_focus();
+                    }
+                }
+            }
+        })
+        .build(app)?;
+
+    // Patch window close to hide instead of exit. This is what makes the
+    // app keep downloads running after the user closes the window.
+    if let Some(win) = app.get_webview_window("main") {
+        let win_for_close = win.clone();
+        win.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = win_for_close.hide();
+                api.prevent_close();
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Called by the single-instance plugin when a second `downpilot` process
+/// launches (e.g. `downpilot <url>` from the terminal). We forward any URL
+/// argument into the existing instance and bring the window forward.
+fn handle_external_launch(app: &tauri::AppHandle, argv: &[String]) {
+    // Bring the existing window forward.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+    // First argv[0] is the binary; the rest is user args. Pick the first
+    // http(s) URL we see, or anything starting with `downpilot://`.
+    for arg in argv.iter().skip(1) {
+        if arg.starts_with("http://") || arg.starts_with("https://") {
+            let _ = app.emit("cli://add_url", arg.clone());
+            return;
+        }
+        if arg.starts_with("downpilot://") {
+            if let Err(e) = route_deep_link(app, arg) {
+                eprintln!("deep-link route failed: {e}");
+            }
+            return;
+        }
+    }
+}
+
+/// Route a `downpilot://...` deep link to the frontend. Currently we only
+/// handle `downpilot://add?url=<url>` — opens the Add dialog pre-filled.
+fn route_deep_link(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    // Cheap parse without pulling in the `url` crate. Format is:
+    //   downpilot://add?url=https%3A%2F%2Fexample.com%2Ffile.zip
+    let after = url.strip_prefix("downpilot://").ok_or("not a downpilot:// url")?;
+    let (verb, query) = match after.split_once('?') {
+        Some((v, q)) => (v, q),
+        None => (after, ""),
+    };
+    match verb {
+        "add" => {
+            // Pull `url=...` out of the query string.
+            for pair in query.split('&') {
+                if let Some(rest) = pair.strip_prefix("url=") {
+                    // urldecode '+' -> ' ' and %XX -> byte. Minimal: enough for a URL.
+                    let decoded = decode_url_component(rest);
+                    let _ = app.emit("cli://add_url", decoded);
+                    return Ok(());
+                }
+            }
+            Err("downpilot://add requires a `url=` query parameter".into())
+        }
+        other => Err(format!("unknown deep-link verb: {other}")),
+    }
+}
+
+/// Minimal percent-decode (no crate). Good enough for `url=` query values.
+fn decode_url_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hi = from_hex(bytes[i + 1]);
+                let lo = from_hex(bytes[i + 2]);
+                match (hi, lo) {
+                    (Some(h), Some(l)) => {
+                        out.push((h << 4) | l);
+                        i += 3;
+                    }
+                    _ => {
+                        out.push(bytes[i]);
+                        i += 1;
+                    }
+                }
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn from_hex(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
 
 
 #[cfg(test)]

@@ -43,6 +43,7 @@ export interface DownloadTask {
   referer: string | null;
   user_agent: string | null;
   cookies: string | null;
+  proxy_url: string | null;
   category: string;
   expected_sha256: string | null;
   error: string | null;
@@ -72,6 +73,13 @@ export interface DownloadTask {
   error_code: number;
   error_category: string;
   on_complete: string;
+  // Phase 3B: download-level priority inside the owning queue.
+  // High=+10, Normal=0, Low=-10.
+  priority: number;
+  // Phase 3B: one-shot "Force Started" flag. True while the user
+  // has explicitly bypassed the queue ordering for this task.
+  // Cleared by the engine whenever the task leaves Downloading.
+  force_started: boolean;
 }
 
 export interface NewDownload {
@@ -98,6 +106,9 @@ export interface NewDownload {
   checksum_algorithm?: string | null;
   on_complete?: string | null;
   start_immediately?: boolean;
+  /** Phase 3B: download-level priority (High=+10, Normal=0, Low=-10).
+   *  Defaults to Normal when omitted. */
+  priority?: number | null;
 }
 
 export interface DownloadQueue {
@@ -121,6 +132,10 @@ export interface DownloadQueue {
   auth_ref?: string;
   auth_user?: string;
   has_password?: boolean;
+  /** Phase 3B: queue chaining — when this queue empties, automatically
+   *  start the named queue (if it exists and is enabled). Empty string
+   *  means "no chain". */
+  next_queue?: string;
 }
 
 export interface SiteRule {
@@ -254,6 +269,11 @@ export interface GrabbedLink {
   category?: string | null;
   /** "include:ext" | "default" | similar — what rule kept the link. */
   matched: string;
+  /** Phase 3C: which HTML attribute the link came from.
+   *  "href" for `<a>`/`<link>`, "src" for `<img>`/`<script>`/`<video>`
+   *  /`<source>`/`<iframe>`, "meta" for `<meta>` redirects.
+   *  Empty string when the source is unknown (legacy data). */
+  source?: string;
 }
 
 // Sidebar tree node selectors.
@@ -311,12 +331,32 @@ export interface ActiveProfile {
   affected_queues: string[];
 }
 
-/** Snapshot returned by the backend telling the UI which schedules
- *  are currently active. Powers the "Night Profile active" badge
- *  in the status bar / queue panel. */
-export interface ActiveProfile {
-  schedule_id: number;
-  name: string;
+/** Phase 3B: per-queue live status snapshot returned by the engine's
+ *  `scheduler_status` command. Used by the queue details panel and the
+ *  status bar to render bandwidth, schedule, and concurrency state. */
+export interface QueueStatus {
+  queue: string;
+  label: string;
+  active_downloads: number;
+  queued_downloads: number;
+  max_simultaneous: number;
+  configured_speed_kbps: number;
+  current_speed_kbps: number;
+  active_schedule_id: number | null;
+  in_own_schedule_window: boolean;
+  enabled: boolean;
   priority: number;
-  affected_queues: string[];
+  auth_configured: boolean;
+}
+
+/** Phase 3B: live snapshot of the scheduler — used by the status bar
+ *  and the queue details panel to render the orchestration system
+ *  without re-running the precedence sort on the frontend. */
+export interface SchedulerStatus {
+  active_profiles: ActiveProfile[];
+  queues: QueueStatus[];
+  global_max_simultaneous: number;
+  global_active: number;
+  global_queued: number;
+  time_now: string;
 }

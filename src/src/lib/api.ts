@@ -80,6 +80,21 @@ export async function retryAll(): Promise<void> {
 export async function recheckDownload(id: number): Promise<void> {
   return call("recheck_download", { id }, () => undefined);
 }
+export async function verifyChecksum(id: number): Promise<{
+  algorithm: string;
+  computed: string;
+  expected: string;
+  matches: boolean | null;
+  file_size: number;
+}> {
+  return call("verify_checksum", { id }, () => ({
+    algorithm: "",
+    computed: "",
+    expected: "",
+    matches: null,
+    file_size: 0,
+  }));
+}
 export async function deleteFile(id: number): Promise<void> {
   return call("delete_file", { id }, () => undefined);
 }
@@ -98,8 +113,25 @@ export async function renameDownload(id: number, filename: string): Promise<void
 export async function setSaveDir(id: number, dir: string): Promise<void> {
   return call("set_save_dir", { id, dir }, () => undefined);
 }
+export async function setProxyUrl(id: number, proxyUrl: string | null): Promise<void> {
+  return call("set_proxy_url", { id, proxyUrl }, () => undefined);
+}
 export async function setDescription(id: number, description: string): Promise<void> {
   return call("set_description", { id, description }, () => undefined);
+}
+
+/**
+ * Set (or clear) the expected SHA-256 digest for a download. Pass
+ * `null` or an empty string to clear. The backend normalizes the
+ * value to lowercase; the task is *not* re-queued, but a subsequent
+ * `verifyChecksum` will compare against the stored digest.
+ */
+export async function setExpectedSha256(
+  id: number,
+  value: string | null,
+): Promise<void> {
+  const v = value && value.trim() !== "" ? value.trim() : null;
+  return call("set_expected_sha256", { id, value: v }, () => undefined);
 }
 export async function clearFinished(): Promise<number> {
   return call<number>("clear_finished", {}, () => 0);
@@ -112,7 +144,30 @@ export async function clearFinished(): Promise<number> {
  * context menu.
  */
 export async function openFile(path: string): Promise<void> {
-  return call<void>("open_file", { path }, () => undefined);
+  return call("open_file", { path }, () => undefined);
+}
+
+/** Show a desktop notification. Wraps the Tauri notification plugin
+ *  with safe fallbacks: returns silently if the plugin isn't available
+ *  (e.g. running the UI in a plain browser during dev). */
+export async function notify(
+  title: string,
+  body: string,
+  level: "info" | "warning" | "error" = "info",
+): Promise<void> {
+  try {
+    const mod = await import("@tauri-apps/plugin-notification");
+    if (!(await mod.isPermissionGranted())) {
+      const granted = await mod.requestPermission();
+      if (granted !== "granted") return;
+    }
+    // The plugin doesn't carry an OS-level severity, so we map
+    // warning/error onto the title prefix the user sees.
+    const prefix = level === "error" ? "❌ " : level === "warning" ? "⚠ " : "";
+    await mod.sendNotification({ title: prefix + title, body });
+  } catch {
+    /* not in Tauri (e.g. browser dev) — silently no-op */
+  }
 }
 export async function exportDownloads(path: string): Promise<number> {
   return call("export_downloads", { path }, () => 0);
@@ -385,4 +440,124 @@ export async function clearQueuePassword(queue: string): Promise<void> {
 }
 export async function testQueueAuth(queue: string): Promise<boolean> {
   return call<boolean>("test_queue_auth", { queue }, () => false);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3B: queue orchestration
+// ---------------------------------------------------------------------------
+
+/** High=+10, Normal=0, Low=-10 — the canonical integer mapping used
+ *  by both the engine and the UI. */
+export const PRIO_HIGH = 10;
+export const PRIO_NORMAL = 0;
+export const PRIO_LOW = -10;
+
+export type TaskPriority = "high" | "normal" | "low";
+
+export function priorityFromString(p: TaskPriority): number {
+  switch (p) {
+    case "high":
+      return PRIO_HIGH;
+    case "low":
+      return PRIO_LOW;
+    default:
+      return PRIO_NORMAL;
+  }
+}
+
+export function priorityToString(n: number): TaskPriority {
+  if (n >= PRIO_HIGH) return "high";
+  if (n <= PRIO_LOW) return "low";
+  return "normal";
+}
+
+/** Force-start a single download. Honours the global + per-queue
+ *  concurrency caps; the persistent `priority` is **not** modified. */
+export async function forceStartDownload(id: number): Promise<void> {
+  return call("force_start_download", { id }, () => undefined);
+}
+
+/** Set a download's priority. The integer is what the engine stores;
+ *  the UI uses the High/Normal/Low strings for ergonomic controls. */
+export async function setDownloadPriority(
+  id: number,
+  priority: number,
+): Promise<void> {
+  return call("set_download_priority", { id, priority }, () => undefined);
+}
+
+/** Move a queue up (-1) or down (+1) in the ordering. */
+export async function reorderQueue(name: string, direction: number): Promise<void> {
+  return call("reorder_queue", { name, direction }, () => undefined);
+}
+
+/** Move a queue to the absolute top or bottom. `position` is
+ *  either `"top"` or `"bottom"`. */
+export async function moveQueueTo(name: string, position: "top" | "bottom"): Promise<void> {
+  return call("move_queue_to", { name, position }, () => undefined);
+}
+
+/** Live snapshot of the scheduler — used by the status bar and the
+ *  queue details panel. See `SchedulerStatus` in `types.ts`. */
+export async function schedulerStatus(): Promise<import("../types").SchedulerStatus> {
+  return call<import("../types").SchedulerStatus>(
+    "scheduler_status",
+    {},
+    () => ({
+      active_profiles: [],
+      queues: [],
+      global_max_simultaneous: 0,
+      global_active: 0,
+      global_queued: 0,
+      time_now: "",
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3C: Batch insert + URL precheck
+// ---------------------------------------------------------------------------
+
+/** Insert many downloads in a single round-trip. The engine
+ *  reports per-row results so a single bad URL doesn't abort the
+ *  rest. */
+export async function addDownloadsBatch(
+  nds: NewDownload[],
+): Promise<Array<{ ok: true; id: number } | { ok: false; error: string }>> {
+  const raw = await call<Array<[number, string] | { Ok: number } | { Err: string }>>(
+    "add_downloads_batch",
+    { nds },
+    () => [] as unknown as Array<[number, string]>,
+  );
+  // Tauri's Result serialization arrives as `[Ok(id), Err("…")]`
+  // tuples in older versions, or as `{"Ok": id}` / `{"Err": "…"}`
+  // objects in newer ones. Normalize both.
+  return (raw as unknown[]).map((r) => {
+    if (Array.isArray(r) && r.length === 2) {
+      const [a, b] = r as [unknown, unknown];
+      if (typeof a === "number") return { ok: true as const, id: a };
+      return { ok: false as const, error: String(b) };
+    }
+    const obj = r as { Ok?: number; Err?: string; ok?: number; error?: string };
+    if (typeof obj.Ok === "number" || typeof obj.ok === "number") {
+      return { ok: true as const, id: obj.Ok ?? (obj.ok as number) };
+    }
+    return { ok: false as const, error: obj.Err ?? obj.error ?? "unknown" };
+  });
+}
+
+/** Returns the id of the most recent row whose URL matches, or
+ *  `null` if no row matches. */
+export async function findExistingByUrl(url: string): Promise<number | null> {
+  return call<number | null>(
+    "find_existing_download_by_url",
+    { url },
+    () => null,
+  );
+}
+
+/** Returns how many rows already exist for this URL. The Batch
+ *  dialog uses this to flag duplicates in its preview. */
+export async function countExistingByUrl(url: string): Promise<number> {
+  return call<number>("count_existing_downloads_by_url", { url }, () => 0);
 }

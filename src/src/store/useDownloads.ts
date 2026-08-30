@@ -21,6 +21,7 @@ import type {
   SidebarKey,
   DownloadQueue,
   Category,
+  SchedulerStatus,
 } from "../types";
 
 const STATUS_RANK: Record<string, number> = {
@@ -32,6 +33,8 @@ const STATUS_RANK: Record<string, number> = {
   completed: 5,
   cancelled: 6,
 };
+
+const EMPTY_SAMPLES: number[] = Object.freeze([]) as unknown as number[];
 
 function sideMatch(t: DownloadTask, key: SidebarKey): boolean {
   switch (key.kind) {
@@ -103,6 +106,12 @@ export function useDownloads() {
   const [sites, setSites] = useState<SiteRule[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [activeProfiles, setActiveProfiles] = useState<ActiveProfile[]>([]);
+  /** Phase 3B: live scheduler snapshot — used by the status bar and
+   *  the queue details panel. Refreshed alongside the rest of the
+   *  aux data so the UI doesn't have to poll. */
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(
+    null,
+  );
   /** Effective (current) speed limit for each queue, in kbps. Cached
    *  after each refresh so the UI can show "Scheduled: X" without a
    *  roundtrip per row. */
@@ -110,6 +119,22 @@ export function useDownloads() {
   const tasksRef = useRef<DownloadTask[]>([]);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+
+  // Per-task recent speed samples, oldest first, newest last. The cap is
+  // 120 samples: at 500ms per sample that's a 60-second rolling window,
+  // long enough to spot a throttled download but short enough to keep
+  // memory bounded across hundreds of concurrent tasks.
+  const SPEED_HISTORY_CAP = 120;
+  const speedHistoryRef = useRef<Map<number, number[]>>(new Map());
+  // Last time we recorded a sample for a given task — used to throttle
+  // progress events (which can fire multiple times per second per chunk)
+  // down to ~2 Hz so the graph renders smoothly.
+  const speedHistoryLastRef = useRef<Map<number, number>>(new Map());
+  const SPEED_HISTORY_INTERVAL_MS = 500;
+  const [speedHistoryVersion, setSpeedHistoryVersion] = useState(0);
+  // Bump this once per ring-buffer write so the table can re-render only
+  // the rows that show the graph (we re-render the whole table — fine,
+  // a 200-row table re-renders in <2ms).
 
   const refresh = useCallback(async () => {
     const list = await api.listDownloads();
@@ -120,13 +145,68 @@ export function useDownloads() {
     setLoaded(true);
   }, []);
 
+  // Surface engine-pushed notifications to the user. The Notify event
+  // variant is produced by the engine for completion, checksum results,
+  // destructive-action blocks, and file-op errors. We don't render the
+  // toast here — that's the UI layer's job — but we keep the latest
+  // message in a state slot the StatusBar can subscribe to.
+  const [lastNotification, setLastNotification] = useState<{
+    level: string;
+    title: string;
+    body: string;
+    at: number;
+  } | null>(null);
+
+  // Phase 3A: clear the visible toast when the user dismisses it.
+  // The actual `EngineEvent::Notify` from Rust is consumed by the
+  // desktop-notification plugin in parallel; this is just the in-app
+  // toast surface.
+  const dismissNotification = useCallback(() => {
+    setLastNotification(null);
+  }, []);
+
   const applyEvent = useCallback((raw: EngineEvent) => {
     // Rust serializes events as {"type":"added", ...} (tag = "type",
     // snake_case). The store's EngineEvent type uses `kind`, so read both.
     const ev = raw as unknown as Record<string, any>;
     const kind: string = ev.type ?? ev.kind;
+    if (kind === "notify") {
+      setLastNotification({
+        level: String(ev.level ?? "info"),
+        title: String(ev.title ?? ""),
+        body: String(ev.body ?? ""),
+        at: Date.now(),
+      });
+      // Phase 3A: also forward to the OS desktop-notification
+      // surface (libnotify / KDE / Gnome via the
+      // tauri-plugin-notification plugin). The plugin handles
+      // permission checks and silent-fail in browser dev. We do
+      // NOT await — notifications are best-effort and must never
+      // block the event loop.
+      const level = String(ev.level ?? "info");
+      void import("../lib/api").then((m) =>
+        m.notify(
+          String(ev.title ?? ""),
+          String(ev.body ?? ""),
+          (level === "error" || level === "warning" || level === "info"
+            ? level
+            : "info") as "error" | "warning" | "info",
+        ),
+      );
+    }
+    // A status change / finished event means the next progress burst
+    // is a fresh download. Drop the throttle clock so we don't wait
+    // 500ms before recording the first sample of the new run.
+    if (kind === "status_changed" || kind === "finished") {
+      const resetId: number | undefined = ev.id ?? ev.task?.id;
+      if (resetId !== undefined) speedHistoryLastRef.current.delete(resetId);
+    }
     if (kind === "removed") {
       tasksRef.current = tasksRef.current.filter((t) => t.id !== ev.id);
+      // Free the ring buffer for removed tasks so the Map doesn't grow
+      // without bound across a long session.
+      speedHistoryRef.current.delete(ev.id);
+      speedHistoryLastRef.current.delete(ev.id);
     } else if (kind === "added") {
       tasksRef.current = [normalizeTask(ev.task), ...tasksRef.current];
     } else if (kind === "status_changed") {
@@ -150,24 +230,47 @@ export function useDownloads() {
             }
           : t
       );
+      // Throttle: only record a new sample at most every 500ms per task.
+      // The Rust side emits `EngineEvent::Progress` for every chunk
+      // write, which can be 10+ Hz per task on a fast link. Recording
+      // 2 Hz is plenty for a 60s window sparkline.
+      const now = performance.now();
+      const last = speedHistoryLastRef.current.get(ev.id) ?? 0;
+      if (now - last >= SPEED_HISTORY_INTERVAL_MS) {
+        speedHistoryLastRef.current.set(ev.id, now);
+        const buf = speedHistoryRef.current.get(ev.id);
+        if (buf) {
+          buf.push(ev.speed_bps);
+          if (buf.length > SPEED_HISTORY_CAP) buf.shift();
+        } else {
+          speedHistoryRef.current.set(ev.id, [ev.speed_bps]);
+        }
+        // Bump the version so the table re-renders. We keep this in a
+        // state so React tracks it; the actual data lives in the ref.
+        setSpeedHistoryVersion((v) => v + 1);
+      }
     }
     setTasks([...tasksRef.current]);
   }, []);
 
   const refreshAux = useCallback(async () => {
     try {
-      const [q, c, st, ap, sites] = await Promise.all([
+      const [q, c, st, ap, sites, sched] = await Promise.all([
         api.listQueues(),
         api.listCategories(),
         api.listSchedules(),
         api.activeProfiles(),
         api.listSites(),
+        api.schedulerStatus(),
       ]);
       setQueues(q);
       setCategories(c);
       setSites(sites);
       setSchedules(st);
       setActiveProfiles(ap);
+      // Phase 3B: live scheduler snapshot drives the queue details
+      // panel and the status bar.
+      setSchedulerStatus(sched);
       // Refresh effective speeds for every queue we know about.
       const map: Record<string, number> = {};
       await Promise.all(
@@ -249,6 +352,41 @@ export function useDownloads() {
     [refresh, categories]
   );
 
+  /** Phase 3C: batch-insert many downloads in a single round-trip.
+   *  Each row is reported independently so a single malformed URL
+   *  does not abort the rest. The returned ids / errors mirror the
+   *  input order, which is what the Batch dialog renders inline.
+   *  Like `add`, this also honors each task's category's
+   *  destination folder when save_dir is missing. */
+  const addBatch = useCallback(
+    async (
+      nds: NewDownload[],
+    ): Promise<Array<{ ok: true; id: number } | { ok: false; error: string }>> => {
+      if (nds.length === 0) return [];
+      // Apply category save_dir for rows that didn't pick one.
+      const expanded = nds.map((nd) => {
+        if (nd.save_dir || !nd.category) return nd;
+        const cat = categories.find(
+          (c) => c.name.toLowerCase() === (nd.category ?? "").toLowerCase(),
+        );
+        if (cat && cat.save_dir) return { ...nd, save_dir: cat.save_dir };
+        return nd;
+      });
+      const out = await api.addDownloadsBatch(expanded);
+      await refresh();
+      return out;
+    },
+    [refresh, categories],
+  );
+
+  /** Phase 3C: count how many rows already exist for a URL. The
+   *  Batch dialog uses this to highlight duplicates in its
+   *  preview. */
+  const countExistingByUrl = useCallback(
+    (url: string) => api.countExistingByUrl(url),
+    [],
+  );
+
   const bulk = useCallback(
     async (fn: (id: number) => Promise<void>) => {
       for (const id of selectedRef.current) await fn(id);
@@ -260,17 +398,35 @@ export function useDownloads() {
   const pause = useCallback((id: number) => api.pauseDownload(id), []);
   const resume = useCallback((id: number) => api.resumeDownload(id), []);
   const cancel = useCallback((id: number) => api.cancelDownload(id), []);
-  const remove = useCallback((id: number) => api.removeDownload(id), []);
+  const remove = useCallback(async (id: number) => {
+    try {
+      await api.removeDownload(id);
+    } catch (e) {
+      await api.notify("Cannot remove download", String(e), "error");
+      throw e;
+    }
+  }, []);
   /** Remove the history row but keep the file on disk. */
-  const removeKeepFile = useCallback((id: number) => api.removeKeepFile(id), []);
+  const removeKeepFile = useCallback(async (id: number) => {
+    try {
+      await api.removeKeepFile(id);
+    } catch (e) {
+      await api.notify("Cannot remove from history", String(e), "error");
+      throw e;
+    }
+  }, []);
   /** Remove the row AND delete the file on disk. Two-step so the
    *  file deletion failure doesn't leave a dangling DB row. */
   const removeWithFile = useCallback(
     async (id: number) => {
       try {
         await api.deleteFile(id);
-      } catch {
-        /* ignore — file may not exist */
+      } catch (e) {
+        // The file may already be gone. That's OK; the next call
+        // removes the DB row either way. We do surface the error
+        // because the user might have a permissions problem that's
+        // worth knowing about.
+        await api.notify("File delete failed", String(e), "warning");
       }
       await api.removeDownload(id);
     },
@@ -286,11 +442,22 @@ export function useDownloads() {
     []
   );
   const rename = useCallback(
-    (id: number, name: string) => api.renameDownload(id, name),
+    async (id: number, name: string) => {
+      try {
+        await api.renameDownload(id, name);
+      } catch (e) {
+        await api.notify("Cannot rename", String(e), "error");
+        throw e;
+      }
+    },
     []
   );
   const setSaveDir = useCallback(
     (id: number, dir: string) => api.setSaveDir(id, dir),
+    []
+  );
+  const setProxyUrl = useCallback(
+    (id: number, proxyUrl: string | null) => api.setProxyUrl(id, proxyUrl),
     []
   );
   const setDescription = useCallback(
@@ -299,19 +466,58 @@ export function useDownloads() {
   );
   const openFolder = useCallback(async (task: DownloadTask) => {
     const path = task.save_dir + (task.filename ? "/" + task.filename : "");
-    await api.openInFileManager(path);
+    try {
+      await api.openInFileManager(path);
+    } catch (e) {
+      await api.notify(
+        "Cannot open folder",
+        `${task.save_dir || path}\n${String(e)}`,
+        "error",
+      );
+      throw e;
+    }
   }, []);
   const openFile = useCallback(async (task: DownloadTask) => {
     const path = task.save_dir + (task.filename ? "/" + task.filename : "");
-    await api.openFile(path);
+    try {
+      await api.openFile(path);
+    } catch (e) {
+      // The most common cause on Linux is no application associated
+      // with the file's MIME type. Surface a clear message instead of
+      // failing silently in the dark.
+      await api.notify(
+        "Cannot open file",
+        `${task.filename || path}\n${String(e)}`,
+        "error",
+      );
+      throw e;
+    }
   }, []);
-  /** Force-start a queued download by removing it from the queue gate.
-   *  We do this by sending a redownload (which re-enqueues), but
-   *  since IDM uses Force Start to bypass the global+queue limits,
-   *  we just call resume with a small hack: cancel+resume forces a
-   *  fresh start. For now, alias to `redownload` (creates a new id
-   *  if needed) since the engine always starts on add(). */
-  const forceStart = useCallback((id: number) => api.resumeDownload(id).catch(() => api.redownload(id)), []);
+  /** Phase 3B: Force Start a download.
+ *
+ *  Bypasses the normal queue ordering — the task is promoted out of
+ *  `Queued` immediately. Hard safety caps (global concurrency, queue
+ *  concurrency, queue enabled flag) are still respected: see
+ *  `engine::force_start`. The persistent `priority` field is NOT
+ *  mutated — only the one-shot `force_started` flag is set, and the
+ *  engine clears it when the task leaves Downloading. */
+  const forceStart = useCallback(
+    async (id: number) => {
+      await api.forceStartDownload(id);
+      await refresh();
+    },
+    [refresh]
+  );
+  /** Phase 3B: set a download's priority (High=+10, Normal=0, Low=-10).
+   *  Persisted by the engine, so the change survives a restart. */
+  const setDownloadPriority = useCallback(
+    async (id: number, priority: number) => {
+      await api.setDownloadPriority(id, priority);
+      await refresh();
+    },
+    [refresh]
+  );
+  const recheck = useCallback((id: number) => api.recheckDownload(id), []);
   const analyze = useCallback(
     (url: string, cookies?: string | null) => api.analyzeUrl(url, cookies),
     []
@@ -388,6 +594,24 @@ export function useDownloads() {
   const deleteQueue = useCallback(
     async (name: string) => {
       await api.deleteQueue(name);
+      const list = await api.listQueues();
+      setQueues(list);
+    },
+    []
+  );
+  /** Phase 3B: move a queue up (-1) or down (+1) in the ordering. */
+  const reorderQueueAction = useCallback(
+    async (name: string, direction: number) => {
+      await api.reorderQueue(name, direction);
+      const list = await api.listQueues();
+      setQueues(list);
+    },
+    []
+  );
+  /** Phase 3B: move a queue to the absolute top or bottom. */
+  const moveQueueToAction = useCallback(
+    async (name: string, position: "top" | "bottom") => {
+      await api.moveQueueTo(name, position);
       const list = await api.listQueues();
       setQueues(list);
     },
@@ -478,16 +702,63 @@ export function useDownloads() {
     let list = tasks;
     if (sidebarKey.kind !== "all") list = list.filter((t) => sideMatch(t, sidebarKey));
     if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (t) =>
-          (t.filename ?? "").toLowerCase().includes(q) ||
-          t.url.toLowerCase().includes(q) ||
-          domainOf(t.url).includes(q) ||
-          (t.category ?? "").toLowerCase().includes(q) ||
-          (t.queue ?? "").toLowerCase().includes(q) ||
-          (t.description ?? "").toLowerCase().includes(q)
-      );
+      // The search box supports a compact filter syntax in addition to
+      // a plain substring match:
+      //   `since:2026-01-01`   → only tasks added on or after that date
+      //   `until:2026-08-29`   → only tasks added on or before that date
+      //   `today`              → tasks added today
+      //   `week`               → tasks added in the last 7 days
+      // Bare terms (anything else) are matched against filename, URL,
+      // domain, category, queue, and description. Multiple terms are
+      // AND-ed.
+      const tokens = search.split(/\s+/).filter(Boolean);
+      const dayMs = 24 * 60 * 60;
+      const todayStart = Math.floor(Date.now() / 1000 / dayMs) * dayMs;
+      const weekStart = todayStart - 6 * dayMs;
+      const dateFilters: ((t: DownloadTask) => boolean)[] = [];
+      const textTerms: string[] = [];
+      for (const tok of tokens) {
+        const lower = tok.toLowerCase();
+        if (lower === "today") {
+          dateFilters.push((t) => (t.created_at ?? 0) >= todayStart);
+          continue;
+        }
+        if (lower === "week") {
+          dateFilters.push((t) => (t.created_at ?? 0) >= weekStart);
+          continue;
+        }
+        const sinceMatch = /^since:(\d{4}-\d{2}-\d{2})$/i.exec(tok);
+        if (sinceMatch) {
+          const ts = Math.floor(new Date(sinceMatch[1] + "T00:00:00Z").getTime() / 1000);
+          if (!isNaN(ts)) {
+            dateFilters.push((t) => (t.created_at ?? 0) >= ts);
+            continue;
+          }
+        }
+        const untilMatch = /^until:(\d{4}-\d{2}-\d{2})$/i.exec(tok);
+        if (untilMatch) {
+          const ts = Math.floor(new Date(untilMatch[1] + "T23:59:59Z").getTime() / 1000);
+          if (!isNaN(ts)) {
+            dateFilters.push((t) => (t.created_at ?? 0) <= ts);
+            continue;
+          }
+        }
+        textTerms.push(lower);
+      }
+      for (const df of dateFilters) list = list.filter(df);
+      if (textTerms.length > 0) {
+        list = list.filter((t) =>
+          textTerms.every(
+            (q) =>
+              (t.filename ?? "").toLowerCase().includes(q) ||
+              t.url.toLowerCase().includes(q) ||
+              domainOf(t.url).includes(q) ||
+              (t.category ?? "").toLowerCase().includes(q) ||
+              (t.queue ?? "").toLowerCase().includes(q) ||
+              (t.description ?? "").toLowerCase().includes(q)
+          )
+        );
+      }
     }
     const dir = sort.dir === "asc" ? 1 : -1;
     const sorted = [...list].sort((a, b) => {
@@ -570,6 +841,15 @@ export function useDownloads() {
     schedules,
     activeProfiles,
     effectiveSpeed,
+    schedulerStatus,
+    // Reader function for the speed-graph column. Returns a stable
+    // reference to the same array each call (so React doesn't see a
+    // new identity on every render and re-render the SVG), but
+    // `speedHistoryVersion` is the dependency consumers should use to
+    // re-read on progress ticks.
+    getSpeedHistory: (id: number) =>
+      speedHistoryRef.current.get(id) ?? EMPTY_SAMPLES,
+    speedHistoryVersion,
     setSidebarKey,
     setSearch,
     setSort,
@@ -579,6 +859,8 @@ export function useDownloads() {
     selectRange,
     clearSelection,
     add,
+    addBatch,
+    countExistingByUrl,
     pause,
     resume,
     cancel,
@@ -594,11 +876,14 @@ export function useDownloads() {
     setCategory,
     rename,
     setSaveDir,
+    setProxyUrl,
     setDescription,
     removeWithFile,
     openFolder,
     openFile,
     forceStart,
+    setDownloadPriority,
+    recheck,
     analyze,
     grabSite,
     grabSiteWithRules,
@@ -612,6 +897,8 @@ export function useDownloads() {
     updateQueue,
     createQueue,
     deleteQueue,
+    reorderQueueAction,
+    moveQueueToAction,
     saveCategory,
     deleteCategory,
     saveSchedule,
@@ -626,6 +913,8 @@ export function useDownloads() {
     updateSetting,
     refresh,
     refreshAux,
+    lastNotification,
+    dismissNotification,
   };
 }
 
@@ -647,6 +936,7 @@ function normalizeTask(t: Partial<DownloadTask> & { id: number }): DownloadTask 
     referer: t.referer ?? null,
     user_agent: t.user_agent ?? null,
     cookies: t.cookies ?? null,
+    proxy_url: t.proxy_url ?? null,
     category: t.category ?? "other",
     expected_sha256: t.expected_sha256 ?? null,
     error: t.error ?? null,
@@ -676,6 +966,9 @@ function normalizeTask(t: Partial<DownloadTask> & { id: number }): DownloadTask 
     error_code: t.error_code ?? 0,
     error_category: t.error_category ?? "",
     on_complete: t.on_complete ?? "",
+    // Phase 3B defaults
+    priority: t.priority ?? 0,
+    force_started: t.force_started ?? false,
   };
 }
 

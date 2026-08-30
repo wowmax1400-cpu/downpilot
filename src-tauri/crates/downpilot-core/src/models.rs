@@ -210,6 +210,10 @@ pub struct DownloadTask {
     /// echoed in NMH responses. **Future hardening:** encrypt at rest
     /// using a machine-scoped key once the keyring backend is selected.
     pub cookies: Option<String>,
+    /// Explicit per-download proxy override. `None` inherits the matching
+    /// Site Rule, queue, global proxy, or direct connection.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
     pub category: String,
     pub expected_sha256: Option<String>,
     pub error: Option<String>,
@@ -239,6 +243,19 @@ pub struct DownloadTask {
     pub error_code: i32,
     pub error_category: String,
     pub on_complete: String,
+    /// Phase 3B: download-level priority inside the owning queue.
+    /// High = +10, Normal = 0, Low = -10. Respected by
+    /// `govern_concurrency` after queue priority but before
+    /// creation time. Persisted via `Db::set_priority`.
+    pub priority: i32,
+    /// Phase 3B: true after the user explicitly pressed Force Start
+    /// on this task. The UI shows a "Force Started" badge while it
+    /// is set, but it does NOT change the task's permanent `priority`
+    /// field — once the task transitions out of Downloading
+    /// (finished / cancelled / paused for any reason), the flag is
+    /// cleared so a future auto-promotion respects normal ordering.
+    #[serde(default)]
+    pub force_started: bool,
 }
 
 impl DownloadTask {
@@ -275,6 +292,7 @@ impl DownloadTask {
             referer: None,
             user_agent: None,
             cookies: None,
+            proxy_url: None,
             category: "other".to_string(),
             expected_sha256: None,
             error: None,
@@ -303,6 +321,8 @@ impl DownloadTask {
             error_code: 0,
             error_category: String::new(),
             on_complete: String::new(),
+            priority: 0,
+            force_started: false,
         }
     }
 }
@@ -319,6 +339,9 @@ pub struct NewDownload {
     pub referer: Option<String>,
     pub user_agent: Option<String>,
     pub cookies: Option<String>,
+    /// Explicit per-download proxy override. Omit to inherit configuration.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
     pub expected_sha256: Option<String>,
     pub category: Option<String>,
     pub queue: Option<String>,
@@ -331,6 +354,11 @@ pub struct NewDownload {
     pub on_complete: Option<String>,
     #[serde(default = "default_true")]
     pub start_immediately: bool,
+    /// Phase 3B: download-level priority (High=10, Normal=0, Low=-10).
+    /// Falls back to the queue's default ordering (creation time) when
+    /// `None`.
+    #[serde(default)]
+    pub priority: Option<i32>,
     /// Opaque browser-side handle used to dedupe: if a Chrome retry fires
     /// the same `chrome.downloads.onCreated` event with the same `browser_id`,
     /// the engine ignores the second insert. Empty string = not from a browser.
@@ -443,6 +471,11 @@ pub struct AppSettings {
     pub auto_organize: Option<bool>,
     pub confirm_exit: Option<bool>,
     pub sound_on_complete: Option<bool>,
+    /// Safety opt-in for the destructive system-level completion actions
+    /// (shutdown / suspend / hibernate). The engine refuses to run them
+    /// unless this is true. Default-false so a fresh install cannot
+    /// accidentally power off the user's machine.
+    pub dangerous_actions: Option<bool>,
 }
 
 /// A download queue.
@@ -459,6 +492,14 @@ pub struct DownloadQueue {
     pub schedule_end: String,
     pub on_complete: String,
     pub on_complete_command: String,
+    /// Phase 3B: queue chaining. When this queue empties, start the
+    /// named queue (if it exists, if it is enabled, and if the user's
+    /// completion-action settings permit it). Empty string = no chain.
+    /// Stored alongside the existing per-queue `on_complete` action —
+    /// the completion path runs the on_complete action first, then
+    /// promotes the chain target.
+    #[serde(default)]
+    pub next_queue: String,
     // Per-queue authentication overlay. Empty/None means inherit global.
     // Sensitive values (passwords) are stored in the OS keyring when
     // available; the boolean fields here are non-secret metadata.
@@ -492,6 +533,7 @@ impl Default for DownloadQueue {
             schedule_end: "23:59".into(),
             on_complete: "none".into(),
             on_complete_command: String::new(),
+            next_queue: String::new(),
             proxy_url: String::new(),
             cookies: String::new(),
             user_agent: String::new(),
@@ -640,6 +682,14 @@ pub struct GrabbedLink {
     /// ("include", "ext", "mime", "size", "default", "excluded:<rule>").
     /// Empty when no rules were applied.
     pub matched: String,
+    /// Phase 3C: which HTML attribute the link was extracted from.
+    /// `href` for `<a>` / `<link>`, `src` for `<img>` / `<script>`
+    /// / `<video>` / `<source>` / `<iframe>`, `meta` for
+    /// `<meta http-equiv="refresh">` and similar. The UI shows a
+    /// small chip next to the filename so the user can tell where
+    /// the link came from.
+    #[serde(default)]
+    pub source: String,
 }
 
 /// User-defined filter for `Download Grabber` results.
@@ -727,6 +777,52 @@ pub struct ActiveProfile {
     /// by this profile.
     pub affected_queues: Vec<String>,
 }
+
+/// Phase 3B: per-queue live status snapshot returned by
+/// `DownloadManager::scheduler_status`. The UI uses this to render
+/// the queue details panel without needing to recompute bandwidth,
+/// scheduling windows, or the precedence order itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueStatus {
+    pub queue: String,
+    pub label: String,
+    pub active_downloads: usize,
+    pub queued_downloads: usize,
+    pub max_simultaneous: i32,
+    /// Speed the user configured for this queue (kbps).
+    pub configured_speed_kbps: u64,
+    /// Speed the engine is currently enforcing (kbps). Equals
+    /// `configured_speed_kbps` when no schedule is overriding it.
+    pub current_speed_kbps: u64,
+    /// If a schedule is currently overriding this queue, this is
+    /// the schedule's id; otherwise `None`.
+    pub active_schedule_id: Option<i64>,
+    /// Whether the queue is currently inside its own
+    /// `schedule_enabled` window. Distinct from a bandwidth
+    /// profile override — a queue can have a schedule that just
+    /// gates start/stop without touching bandwidth.
+    pub in_own_schedule_window: bool,
+    pub enabled: bool,
+    pub priority: i32,
+    /// Whether at least one queued task has a non-empty auth_ref
+    /// (i.e. the queue is configured for credentials). The UI
+    /// shows a small badge next to the queue name.
+    pub auth_configured: bool,
+}
+
+/// Phase 3B: live snapshot of the scheduler returned by
+/// `DownloadManager::scheduler_status`. Designed for the status bar
+/// and the queue details panel: a single struct the UI can render
+/// without further server round-trips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerStatus {
+    pub active_profiles: Vec<ActiveProfile>,
+    pub queues: Vec<QueueStatus>,
+    pub global_max_simultaneous: u32,
+    pub global_active: usize,
+    pub global_queued: usize,
+    pub time_now: String,
+}
 /// Parsed chunk-range response header helper.
 pub fn parse_content_range_total(value: &str) -> Option<i64> {
     let total = value.rsplit('/').next()?;
@@ -734,4 +830,26 @@ pub fn parse_content_range_total(value: &str) -> Option<i64> {
         return None;
     }
     total.parse().ok()
+}
+
+/// Result of a one-shot checksum verification.
+///
+/// `algorithm` is always `"sha256"` for now; the field exists so the
+/// frontend can render the algorithm name without hardcoding it.
+///
+/// `computed` is the lowercase hex digest of the file as it sits on
+/// disk. `expected` is whatever the user entered (the `expected_sha256`
+/// column); empty string means "no expected value, just recorded the
+/// actual digest".
+///
+/// `matches` is `Some(true)` if the computed digest matched the expected
+/// one (case-insensitive), `Some(false)` if it didn't, or `None` if
+/// there was no expected digest to compare against.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChecksumResult {
+    pub algorithm: String,
+    pub computed: String,
+    pub expected: String,
+    pub matches: Option<bool>,
+    pub file_size: u64,
 }

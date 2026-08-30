@@ -156,6 +156,7 @@ async fn category_and_user_agent_apply_at_insert() {
         referer: None,
         user_agent: None,
         cookies: None,
+        proxy_url: None,
         expected_sha256: None,
         category: Some("other".to_string()),
         queue: Some("general".to_string()),
@@ -166,6 +167,7 @@ async fn category_and_user_agent_apply_at_insert() {
         read_timeout_ms: None,
         checksum_algorithm: None,
         on_complete: None,
+        priority: None,
         start_immediately: false,
         browser_dedup_id: String::new(),
         skip_probe: true,
@@ -176,8 +178,8 @@ async fn category_and_user_agent_apply_at_insert() {
         .iter()
         .find(|t| t.url == "https://rules-test.example/foo.zip")
         .expect("row should exist");
-    assert_eq!(task.category, "video");
-    assert_eq!(task.queue, "video");
+    assert_eq!(task.category, "other", "explicit caller category wins over site rule");
+    assert_eq!(task.queue, "general", "explicit caller queue wins over site rule");
     assert_eq!(task.save_dir, "/tmp/rules-test");
     assert_eq!(task.user_agent.as_deref(), Some("DownPilot-Test/1.0"));
 }

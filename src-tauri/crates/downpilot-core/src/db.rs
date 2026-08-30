@@ -104,7 +104,7 @@ impl Db {
             );",
         )?;
         // Extended task columns (added post-1.0; safe to re-run).
-        let migrations: [&str; 36] = [
+        let migrations: [&str; 40] = [
             "ALTER TABLE downloads ADD COLUMN queue TEXT NOT NULL DEFAULT 'general'",
             "ALTER TABLE downloads ADD COLUMN description TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE downloads ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
@@ -143,6 +143,18 @@ impl Db {
             // DownPilot task for the same chrome.downloads.onCreated event.
             "ALTER TABLE downloads ADD COLUMN browser_dedup_id TEXT NOT NULL DEFAULT ''",
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_dedup ON downloads(browser_dedup_id) WHERE browser_dedup_id != ''",
+            // Phase 3B: download-level priority (High=10, Normal=0, Low=-10)
+            // Sits *inside* the queue-priority sort, so the precedence
+            // chain is: queue priority → task priority → creation time.
+            "ALTER TABLE downloads ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+            // Phase 3B: one-shot "Force Started" flag. Lights up the
+            // UI badge without changing the task's permanent priority.
+            "ALTER TABLE downloads ADD COLUMN force_started INTEGER NOT NULL DEFAULT 0",
+            // Phase 3B: queue chaining — when this queue empties, start
+            // `next_queue` automatically. Empty string = no chain.
+            "ALTER TABLE queues ADD COLUMN next_queue TEXT NOT NULL DEFAULT ''",
+            // Per-download proxy: NULL/inherit, empty string/direct, URL/custom.
+            "ALTER TABLE downloads ADD COLUMN proxy_url TEXT",
             // Site Rules: category + user_agent fields. The existing
             // sites table predates these; the ALTER statements are
             // idempotent because each column has a DEFAULT.
@@ -221,9 +233,9 @@ impl Db {
              (url, filename, save_dir, status, threads, format_id, webpage_url, referer,
               user_agent, cookies, category, expected_sha256, created_at, updated_at,
               queue, description, max_retries, retry_delay_ms, conn_timeout_ms, read_timeout_ms,
-              checksum_algorithm, on_complete, browser_dedup_id)
+              checksum_algorithm, on_complete, browser_dedup_id, priority, proxy_url)
              VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12,
-                     ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                     ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 nd.url,
                 filename,
@@ -246,9 +258,42 @@ impl Db {
                 nd.checksum_algorithm.clone().unwrap_or_default(),
                 nd.on_complete.clone().unwrap_or_default(),
                 nd.browser_dedup_id.clone(),
+                nd.priority.unwrap_or(0),
+                nd.proxy_url.clone(),
             ],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Phase 3B: set a task's download-level priority (high/normal/low).
+    /// Persisted so the precedence chain survives an app restart.
+    pub fn set_priority(&self, id: i64, priority: i32) -> rusqlite::Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE downloads SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+            params![priority, now(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_proxy_url(&self, id: i64, proxy_url: Option<&str>) -> rusqlite::Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE downloads SET proxy_url = ?1, updated_at = ?2 WHERE id = ?3",
+            params![proxy_url, now(), id],
+        )?;
+        Ok(())
+    }
+
+    /// Phase 3B: toggle the one-shot "Force Started" badge. The flag
+    /// does not change the task's persistent priority — it only tells
+    /// `govern_concurrency` to consider this task as a transient
+    /// bypass candidate. The engine clears it whenever the task
+    /// leaves Downloading.
+    pub fn set_force_started(&self, id: i64, value: bool) -> rusqlite::Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE downloads SET force_started = ?1, updated_at = ?2 WHERE id = ?3",
+            params![value as i64, now(), id],
+        )?;
+        Ok(())
     }
 
 /// Look up a task by the browser-side dedup handle. Returns `None` if the
@@ -264,6 +309,47 @@ impl Db {
         Ok(rows.next().transpose()?.map(|id| id))
     }
 
+    /// Look up a task by URL. Returns the most recently inserted matching
+    /// id, or `None` if no task matches. Used by the Batch dialog and the
+    /// Grabber dialog to pre-warn the user about a URL they're about to
+    /// add that already exists in the table.
+    ///
+    /// Note: this is a *helper*, not an enforcement point. The engine
+    /// never refuses to add a URL just because it already exists — users
+    /// legitimately re-download files (different file version, expired
+    /// link, etag miss, etc.). The Batch dialog uses this to highlight
+    /// duplicate rows in its preview so the user can decide.
+    pub fn find_by_url(&self, url: &str) -> rusqlite::Result<Option<i64>> {
+        if url.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM downloads WHERE url = ?1 ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([url], |r| r.get::<_, i64>(0))?;
+        Ok(rows.next().transpose()?.map(|id| id))
+    }
+
+    /// Returns the count of rows whose `url` matches `url` exactly. Used
+    /// by the Batch dialog to flag "this URL is already in the table N
+    /// times" — even if the most recent one is in a terminal state.
+    pub fn count_by_url(&self, url: &str) -> rusqlite::Result<i64> {
+        if url.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let conn = &conn;
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM downloads WHERE url = ?1",
+                [url],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(n)
+    }
+
     pub fn get(&self, id: i64) -> rusqlite::Result<Option<DownloadTask>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -274,7 +360,7 @@ impl Db {
                     retry_delay_ms, conn_timeout_ms, read_timeout_ms, peak_speed_bps,
                     avg_speed_bps, segments, resume_support, http_status, content_type,
                     checksum_algorithm, checksum_value, checksum_verified, site_id, error_code,
-                    error_category, on_complete
+                    error_category, on_complete, priority, force_started, proxy_url
              FROM downloads WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id], row_to_task)?;
@@ -291,7 +377,7 @@ impl Db {
                     retry_delay_ms, conn_timeout_ms, read_timeout_ms, peak_speed_bps,
                     avg_speed_bps, segments, resume_support, http_status, content_type,
                     checksum_algorithm, checksum_value, checksum_verified, site_id, error_code,
-                    error_category, on_complete
+                    error_category, on_complete, priority, force_started, proxy_url
              FROM downloads ORDER BY id DESC",
         )?;
         let tasks = stmt.query_map([], row_to_task)?.collect::<Result<Vec<_>, _>>()?;
@@ -308,7 +394,7 @@ impl Db {
                     retry_delay_ms, conn_timeout_ms, read_timeout_ms, peak_speed_bps,
                     avg_speed_bps, segments, resume_support, http_status, content_type,
                     checksum_algorithm, checksum_value, checksum_verified, site_id, error_code,
-                    error_category, on_complete
+                    error_category, on_complete, priority, force_started, proxy_url
              FROM downloads WHERE queue = ?1 ORDER BY id DESC",
         )?;
         let tasks = stmt
@@ -512,6 +598,20 @@ impl Db {
         Ok(())
     }
 
+    /// Set (or clear, if `value` is `None`) the user-supplied
+    /// expected SHA-256 digest. Pass an empty string to clear.
+    pub fn set_expected_sha256(&self, id: i64, value: Option<&str>) -> rusqlite::Result<()> {
+        let normalized = value
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase());
+        self.conn.lock().unwrap().execute(
+            "UPDATE downloads SET expected_sha256 = ?1 WHERE id = ?2",
+            params![normalized, id],
+        )?;
+        Ok(())
+    }
+
     /// Update the task's User-Agent header. Used by Site Rules to apply
     /// a per-domain UA override at insert time.
     pub fn set_user_agent(&self, id: i64, user_agent: &str) -> rusqlite::Result<()> {
@@ -547,7 +647,7 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT name, label, max_simultaneous, speed_limit_kbps, enabled, priority,
                     schedule_enabled, schedule_start, schedule_end, on_complete, on_complete_command,
-                    proxy_url, cookies, user_agent, auth_ref, auth_user, has_password
+                    next_queue, proxy_url, cookies, user_agent, auth_ref, auth_user, has_password
              FROM queues ORDER BY priority ASC, name ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -563,12 +663,13 @@ impl Db {
                 schedule_end: r.get(8)?,
                 on_complete: r.get(9)?,
                 on_complete_command: r.get(10)?,
-                proxy_url: r.get(11)?,
-                cookies: r.get(12)?,
-                user_agent: r.get(13)?,
-                auth_ref: r.get(14)?,
-                auth_user: r.get(15)?,
-                has_password: r.get::<_, i64>(16)? != 0,
+                next_queue: r.get(11)?,
+                proxy_url: r.get(12)?,
+                cookies: r.get(13)?,
+                user_agent: r.get(14)?,
+                auth_ref: r.get(15)?,
+                auth_user: r.get(16)?,
+                has_password: r.get::<_, i64>(17)? != 0,
             })
         })?;
         rows.collect()
@@ -579,7 +680,7 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT name, label, max_simultaneous, speed_limit_kbps, enabled, priority,
                     schedule_enabled, schedule_start, schedule_end, on_complete, on_complete_command,
-                    proxy_url, cookies, user_agent, auth_ref, auth_user, has_password
+                    next_queue, proxy_url, cookies, user_agent, auth_ref, auth_user, has_password
              FROM queues WHERE name = ?1",
         )?;
         let mut rows = stmt.query_map([name], |r| {
@@ -595,12 +696,13 @@ impl Db {
                 schedule_end: r.get(8)?,
                 on_complete: r.get(9)?,
                 on_complete_command: r.get(10)?,
-                proxy_url: r.get(11)?,
-                cookies: r.get(12)?,
-                user_agent: r.get(13)?,
-                auth_ref: r.get(14)?,
-                auth_user: r.get(15)?,
-                has_password: r.get::<_, i64>(16)? != 0,
+                next_queue: r.get(11)?,
+                proxy_url: r.get(12)?,
+                cookies: r.get(13)?,
+                user_agent: r.get(14)?,
+                auth_ref: r.get(15)?,
+                auth_user: r.get(16)?,
+                has_password: r.get::<_, i64>(17)? != 0,
             })
         })?;
         rows.next().transpose()
@@ -611,8 +713,8 @@ impl Db {
         conn.execute(
             "INSERT INTO queues (name, label, max_simultaneous, speed_limit_kbps, enabled, priority,
                                 schedule_enabled, schedule_start, schedule_end, on_complete, on_complete_command,
-                                proxy_url, cookies, user_agent, auth_ref, auth_user, has_password)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                                next_queue, proxy_url, cookies, user_agent, auth_ref, auth_user, has_password)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(name) DO UPDATE SET
                 label = excluded.label,
                 max_simultaneous = excluded.max_simultaneous,
@@ -624,6 +726,7 @@ impl Db {
                 schedule_end = excluded.schedule_end,
                 on_complete = excluded.on_complete,
                 on_complete_command = excluded.on_complete_command,
+                next_queue = excluded.next_queue,
                 proxy_url = excluded.proxy_url,
                 cookies = excluded.cookies,
                 user_agent = excluded.user_agent,
@@ -642,6 +745,7 @@ impl Db {
                 q.schedule_end,
                 q.on_complete,
                 q.on_complete_command,
+                q.next_queue,
                 q.proxy_url,
                 q.cookies,
                 q.user_agent,
@@ -1043,6 +1147,9 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<DownloadTask> {
         error_code: row.get(39)?,
         error_category: row.get(40)?,
         on_complete: row.get(41)?,
+        priority: row.get(42)?,
+        force_started: row.get::<_, i64>(43)? != 0,
+        proxy_url: row.get(44)?,
     })
 }
 

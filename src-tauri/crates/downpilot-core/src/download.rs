@@ -7,13 +7,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, RANGE, REFERER, USER_AGENT};
+use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, RANGE, REFERER, USER_AGENT};
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
+use base64::Engine as _;
 use crate::models::{parse_content_range_total, DownloadTask, EngineEvent};
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +49,8 @@ pub enum DownloadError {
     ChecksumMismatch { expected: String, got: String },
     #[error("invalid output path")]
     InvalidPath,
+    #[error("invalid proxy URL: {0}")]
+    InvalidProxy(String),
 }
 
 type ChunkProgress = (usize, u64); // (chunk index, cumulative bytes done)
@@ -59,6 +62,12 @@ pub struct ChunkDownloader {
     proxy_url: Mutex<Option<String>>,
     state_dir: PathBuf,
     speed_limit: Arc<AtomicU64>,
+    /// Optional credential store for per-queue auth. When `Some`,
+    /// the downloader resolves the task's queue and applies the
+    /// configured credential to outgoing requests. Wrapped in a
+    /// `Mutex` so the manager can attach it post-construction
+    /// (the manager itself lives behind an `Arc`).
+    creds: Mutex<Option<Arc<crate::credentials::CredentialStore>>>,
 }
 
 struct ChunkTask {
@@ -68,28 +77,43 @@ struct ChunkTask {
 
 impl ChunkDownloader {
     pub fn new(state_dir: PathBuf, speed_limit: Arc<AtomicU64>) -> Self {
-        let client = Self::build_client(None);
+        let client = Self::build_client(None).expect("failed to build default HTTP client");
         Self {
             client: Mutex::new(client),
             proxy_url: Mutex::new(None),
             state_dir,
             speed_limit,
+            creds: Mutex::new(None),
         }
     }
 
-    fn build_client(proxy: Option<&str>) -> reqwest::Client {
+    /// Attach a credential store. Must be called once at startup
+    /// before any download starts. The store is `Arc`-shared so
+    /// `DownloadManager` can hand the same instance to the
+    /// downloader and to the Tauri commands.
+    ///
+    /// Thread-safe via interior mutability; called exactly once at
+    /// startup. Idempotent if called more than once (the second
+    /// call wins, which is the desired behavior if the store is
+    /// re-attached after a keyring handoff).
+    pub fn set_credentials(&self, creds: Arc<crate::credentials::CredentialStore>) {
+        *self.creds.lock().unwrap() = Some(creds);
+    }
+
+    fn build_client(proxy: Option<&str>) -> Result<reqwest::Client, DownloadError> {
         let mut b = reqwest::Client::builder().connect_timeout(Duration::from_secs(15));
         if let Some(p) = proxy {
-            if let Ok(p) = reqwest::Proxy::all(p) {
-                b = b.proxy(p);
-            }
+            let p = reqwest::Proxy::all(p).map_err(|e| DownloadError::InvalidProxy(e.to_string()))?;
+            b = b.proxy(p);
         }
-        b.build().expect("failed to build http client")
+        b.build().map_err(|e| DownloadError::InvalidProxy(e.to_string()))
     }
 
     /// Rebuild the HTTP client with a new proxy. Pass None to clear.
     pub fn set_proxy(&self, proxy: Option<&str>) {
-        *self.client.lock().unwrap() = Self::build_client(proxy);
+        if let Ok(client) = Self::build_client(proxy) {
+            *self.client.lock().unwrap() = client;
+        }
         *self.proxy_url.lock().unwrap() = proxy.map(|s| s.to_string());
     }
 
@@ -128,6 +152,38 @@ impl ChunkDownloader {
         h
     }
 
+    /// Resolve the credential for the task's queue and return the
+    /// appropriate `Authorization` header value, if any.
+    ///
+    /// Format: if the stored secret contains a `:`, it is treated
+    /// as `user:password` and encoded as HTTP Basic. Otherwise it
+    /// is sent verbatim as a Bearer token.
+    ///
+    /// Returns `None` when:
+    /// - the downloader has no credential store attached
+    /// - the task has no queue
+    /// - the queue has no configured credential
+    /// - the queue has an empty or whitespace-only secret
+    fn auth_header_for(&self, task: &DownloadTask) -> Option<HeaderValue> {
+        let store = self.creds.lock().unwrap().clone()?;
+        if task.queue.is_empty() {
+            return None;
+        }
+        let secret = store.get(&task.queue).ok()?;
+        let secret = secret.trim();
+        if secret.is_empty() {
+            return None;
+        }
+        if let Some((user, pass)) = secret.split_once(':') {
+            // HTTP Basic. `user:pass` -> base64(user:pass).
+            let pair = format!("{user}:{pass}");
+            let encoded = base64::engine::general_purpose::STANDARD.encode(pair.as_bytes());
+            HeaderValue::from_str(&format!("Basic {encoded}")).ok()
+        } else {
+            HeaderValue::from_str(&format!("Bearer {secret}")).ok()
+        }
+    }
+
     /// Build a `reqwest::Client` with the task's per-byte read timeout
     /// applied. When the task has no read timeout (the default), returns
     /// the shared `http_client()` clone — cheap, Arc-backed.
@@ -139,20 +195,20 @@ impl ChunkDownloader {
     /// a Client-level setting in 0.12 — fires when no bytes are received
     /// for the given duration. It's different from the whole-request
     /// `.timeout()` which only covers connect + first byte.
-    fn client_for(&self, task: &DownloadTask) -> reqwest::Client {
-        if task.read_timeout_ms > 0 {
-            let proxy = self.proxy_url.lock().unwrap().clone();
-            let mut b = reqwest::Client::builder();
-            if let Some(p) = proxy.as_deref() {
-                if let Ok(proxy) = reqwest::Proxy::all(p) {
-                    b = b.proxy(proxy);
-                }
+    fn client_for(&self, task: &DownloadTask) -> Result<reqwest::Client, DownloadError> {
+        let proxy = task.proxy_url.clone().or_else(|| self.proxy_url.lock().unwrap().clone());
+        if task.read_timeout_ms > 0 || task.proxy_url.is_some() {
+            let mut b = reqwest::Client::builder().connect_timeout(Duration::from_secs(15));
+            if let Some(p) = proxy.as_deref().filter(|p| !p.is_empty()) {
+                let proxy = reqwest::Proxy::all(p).map_err(|e| DownloadError::InvalidProxy(e.to_string()))?;
+                b = b.proxy(proxy);
             }
-            b.read_timeout(Duration::from_millis(task.read_timeout_ms as u64))
-                .build()
-                .unwrap_or_else(|_| self.http_client())
+            if task.read_timeout_ms > 0 {
+                b = b.read_timeout(Duration::from_millis(task.read_timeout_ms as u64));
+            }
+            b.build().map_err(|e| DownloadError::InvalidProxy(e.to_string()))
         } else {
-            self.http_client()
+            Ok(self.http_client())
         }
     }
 
@@ -162,10 +218,14 @@ impl ChunkDownloader {
         &self,
         task: &DownloadTask,
     ) -> Result<(Option<i64>, bool, Option<String>, Option<String>), DownloadError> {
+        let mut h = Self::headers_for(task);
+        if let Some(auth) = self.auth_header_for(task) {
+            h.insert(AUTHORIZATION, auth);
+        }
         let resp = self
-            .client_for(task)
+            .client_for(task)?
             .head(&task.url)
-            .headers(Self::headers_for(task))
+            .headers(h)
             .send()
             .await?;
         let head_status = resp.status();
@@ -234,7 +294,7 @@ impl ChunkDownloader {
         let mut h = Self::headers_for(task);
         h.insert(RANGE, HeaderValue::from_static("bytes=0-0"));
         let resp = self
-            .client_for(task)
+            .client_for(task)?
             .get(&task.url)
             .headers(h)
             .send()
@@ -268,7 +328,7 @@ impl ChunkDownloader {
         let mut h = Self::headers_for(task);
         h.insert(RANGE, HeaderValue::from_static("bytes=0-0"));
         let resp = self
-            .client_for(task)
+            .client_for(task)?
             .get(&task.url)
             .headers(h)
             .send()
@@ -283,7 +343,7 @@ impl ChunkDownloader {
         let mut h = Self::headers_for(task);
         h.insert(RANGE, HeaderValue::from_static("bytes=0-0"));
         let resp = self
-            .client_for(task)
+            .client_for(task)?
             .get(&task.url)
             .headers(h)
             .send()
@@ -373,7 +433,7 @@ impl ChunkDownloader {
             existing = 0;
         }
         let resp = self
-            .client_for(task)
+            .client_for(task)?
             .get(&task.url)
             .headers(headers)
             .send()
@@ -440,8 +500,9 @@ impl ChunkDownloader {
             // Build the per-task client (honors `read_timeout_ms` + proxy).
             // When the task has no read timeout, this returns the shared
             // `http_client()` clone — cheap, Arc-backed.
-            let client = self.client_for(task);
+            let client = self.client_for(task)?;
             let headers = Self::headers_for(task);
+            let auth_header = self.auth_header_for(task);
             let speed_limit = self.speed_limit.clone();
             let cancel = cancel.clone();
             let chunk_tx = chunk_tx.clone();
@@ -455,6 +516,9 @@ impl ChunkDownloader {
                         return Ok(());
                     }
                     let mut h = headers.clone();
+                    if let Some(auth) = auth_header {
+                        h.insert(AUTHORIZATION, auth);
+                    }
                     h.insert(
                         RANGE,
                         HeaderValue::from_str(&format!("bytes={range_start}-{end}")).unwrap(),
@@ -714,5 +778,114 @@ fn hex_digit(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use tempfile::tempdir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn spawn_origin() -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let shared = Arc::clone(&hits);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { continue };
+                let shared = Arc::clone(&shared);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 { return; }
+                    shared.fetch_add(1, Ordering::SeqCst);
+                    let is_head = String::from_utf8_lossy(&buf[..n]).starts_with("HEAD ");
+                    let body = b"proxy-test";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    if !is_head {
+                        let _ = stream.write_all(body).await;
+                    }
+                });
+            }
+        });
+        (addr, hits)
+    }
+
+    async fn spawn_proxy() -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let shared = Arc::clone(&hits);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { continue };
+                let shared = Arc::clone(&shared);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 { return; }
+                    shared.fetch_add(1, Ordering::SeqCst);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let method = request
+                        .lines()
+                        .next()
+                        .and_then(|line| line.split_whitespace().next())
+                        .unwrap_or("GET");
+                    let body = b"proxy-test";
+                    let response = if method.eq_ignore_ascii_case("HEAD") {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\nproxy-test",
+                            body.len()
+                        )
+                    };
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (addr, hits)
+    }
+
+    fn task(url: String, proxy_url: Option<String>, dir: &std::path::Path) -> DownloadTask {
+        let mut task = DownloadTask::default_for_probe(&url, "proxy-test.txt");
+        task.proxy_url = proxy_url;
+        task.save_dir = dir.to_string_lossy().into_owned();
+        task
+    }
+
+    #[tokio::test]
+    async fn custom_proxy_is_used_and_direct_override_bypasses_global_proxy() {
+        let (origin, origin_hits) = spawn_origin().await;
+        let (proxy, proxy_hits) = spawn_proxy().await;
+        let dir = tempdir().unwrap();
+        let downloader = ChunkDownloader::new(dir.path().join("state"), Arc::new(AtomicU64::new(0)));
+        downloader.set_proxy(Some(&format!("http://{proxy}")));
+
+        let through_proxy = task(
+            format!("http://{origin}/through-proxy"),
+            None,
+            dir.path(),
+        );
+        downloader.probe(&through_proxy).await.unwrap();
+        assert!(proxy_hits.load(Ordering::SeqCst) > 0);
+        assert_eq!(origin_hits.load(Ordering::SeqCst), 0);
+
+        let before = proxy_hits.load(Ordering::SeqCst);
+        let direct = task(format!("http://{origin}/direct"), Some(String::new()), dir.path());
+        downloader.probe(&direct).await.unwrap();
+        assert_eq!(proxy_hits.load(Ordering::SeqCst), before);
+        assert!(origin_hits.load(Ordering::SeqCst) > 1);
     }
 }

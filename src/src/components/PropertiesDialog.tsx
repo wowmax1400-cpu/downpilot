@@ -15,6 +15,15 @@ import {
   formatDuration,
   domainOf,
 } from "../lib/format";
+import * as api from "../lib/api";
+
+interface ChecksumOutcome {
+  algorithm: string;
+  computed: string;
+  expected: string;
+  matches: boolean | null;
+  file_size: number;
+}
 
 type Props = { store: DownloadsStore; id: number; onClose: () => void };
 
@@ -26,6 +35,14 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("General");
   const [desc, setDesc] = useState(task?.description ?? "");
   const [saveDir, setSaveDir] = useState(task?.save_dir ?? "");
+  const [expectedSha, setExpectedSha] = useState(task?.expected_sha256 ?? "");
+  const [verifyResult, setVerifyResult] = useState<ChecksumOutcome | null>(null);
+  const [proxyMode, setProxyMode] = useState<"inherit" | "direct" | "custom">(
+    task?.proxy_url == null ? "inherit" : task.proxy_url === "" ? "direct" : "custom",
+  );
+  const [proxyValue, setProxyValue] = useState(task?.proxy_url ?? "");
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   if (!task) return null;
 
@@ -37,7 +54,23 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
       ? Math.max(0, task.completed_at - task.started_at)
       : null;
 
-  const dirty = desc !== (task.description ?? "") || saveDir !== task.save_dir;
+  const effectiveProxy = (() => {
+    if (task.proxy_url != null) {
+      return { label: task.proxy_url ? "Custom" : "Direct", value: task.proxy_url };
+    }
+    const site = store.sites.find((s) => s.domain && domainOf(task.url).toLowerCase() === s.domain.toLowerCase() || s.domain && domainOf(task.url).toLowerCase().endsWith(`.${s.domain.toLowerCase()}`));
+    if (site?.proxy_url) return { label: `Site Rule — ${site.domain}`, value: site.proxy_url };
+    const queue = store.queues.find((q) => q.name === task.queue);
+    if (queue?.proxy_url) return { label: `Queue — ${queue.label || queue.name}`, value: queue.proxy_url };
+    if (store.settings?.proxy_url) return { label: "Global", value: store.settings.proxy_url };
+    return { label: "Direct", value: "" };
+  })();
+  const dirty =
+    desc !== (task.description ?? "") ||
+    saveDir !== task.save_dir ||
+    expectedSha !== (task.expected_sha256 ?? "") ||
+    proxyMode !== (task.proxy_url == null ? "inherit" : task.proxy_url === "" ? "direct" : "custom") ||
+    (proxyMode === "custom" && proxyValue !== (task.proxy_url ?? ""));
 
   const apply = async () => {
     try {
@@ -47,8 +80,30 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
       if (saveDir !== task.save_dir) {
         await store.setSaveDir(task.id, saveDir);
       }
+      if (expectedSha !== (task.expected_sha256 ?? "")) {
+        await api.setExpectedSha256(task.id, expectedSha);
+      }
+      const nextProxy = proxyMode === "inherit" ? null : proxyMode === "direct" ? "" : proxyValue.trim();
+      if (nextProxy !== (task.proxy_url ?? null)) {
+        await store.setProxyUrl(task.id, nextProxy);
+      }
     } catch {
       /* ignore */
+    }
+  };
+
+  const runVerify = async () => {
+    if (!task) return;
+    setVerifyBusy(true);
+    setVerifyError(null);
+    setVerifyResult(null);
+    try {
+      const out = await api.verifyChecksum(task.id);
+      setVerifyResult(out);
+    } catch (e) {
+      setVerifyError(String(e));
+    } finally {
+      setVerifyBusy(false);
     }
   };
 
@@ -86,6 +141,62 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
             <Row k="Remaining" v={formatBytes(remaining)} />
             <Row k="Progress" v={formatPercent(task.downloaded, task.total_size)} />
             <Row k="Status" v={task.status} />
+            <Row
+              k="Priority"
+              v={
+                task.priority >= api.PRIO_HIGH
+                  ? "High"
+                  : task.priority <= api.PRIO_LOW
+                  ? "Low"
+                  : "Normal"
+              }
+            />
+            {task.force_started && (
+              <Row k="Force Started" v="Yes" />
+            )}
+            <div className="kv__row kv__row--full">
+              <dt>Set priority</dt>
+              <dd className="flex items-center gap-2">
+                <select
+                  className="input input--inline"
+                  value={
+                    task.priority >= api.PRIO_HIGH
+                      ? "high"
+                      : task.priority <= api.PRIO_LOW
+                      ? "low"
+                      : "normal"
+                  }
+                  onChange={(e) => {
+                    const v = api.priorityFromString(
+                      e.target.value as api.TaskPriority,
+                    );
+                    void store.setDownloadPriority(task.id, v);
+                  }}
+                >
+                  <option value="high">High</option>
+                  <option value="normal">Normal</option>
+                  <option value="low">Low</option>
+                </select>
+                <span title="Promote this task immediately, bypassing the queue ordering">
+                <Btn
+                  variant="default"
+                  onClick={() => void store.forceStart(task.id)}
+                  disabled={task.status === "downloading" || task.status === "completed"}
+                >
+                  Force Start
+                </Btn>
+              </span>
+              </dd>
+            </div>
+            {task.expected_sha256 && (
+              <Row k="Expected SHA-256" v={task.expected_sha256} />
+            )}
+            {task.checksum_algorithm && task.checksum_value && (
+              <Row
+                k="Checksum"
+                v={`${task.checksum_algorithm}: ${task.checksum_value.slice(0, 16)}…  ${task.checksum_verified ? "✓ verified" : "(unverified)"}`}
+              />
+            )}
             {task.error && <Row k="Error" v={task.error} />}
           </dl>
         )}
@@ -121,7 +232,24 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
 
         {tab === "Network" && (
           <dl className="kv">
-            <Row k="Proxy" v={task.cookies || task.user_agent ? "Configured" : "—"} />
+            <Row k="Effective proxy" v={effectiveProxy.label} />
+            <div className="kv__row">
+              <dt>Proxy mode</dt>
+              <dd>
+                <select
+                  className="input input--sm"
+                  value={proxyMode}
+                  onChange={(e) => setProxyMode(e.target.value as "inherit" | "direct" | "custom")}
+                >
+                  <option value="inherit">Inherit</option>
+                  <option value="direct">Direct</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </dd>
+            </div>
+            {proxyMode === "custom" && (
+              <Row k="Proxy URL" v={proxyValue} editable onChange={setProxyValue} />
+            )}
             <Row k="Connection mode" v={task.threads > 1 ? "Segmented" : "Single"} />
             <Row k="User agent" v={task.user_agent ?? "(default)"} />
             <Row k="Authentication" v={task.cookies || task.site_id ? "Provided" : "None"} />
@@ -151,6 +279,73 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
             <Row k="Error code" v={task.error_code ? String(task.error_code) : "—"} />
             <Row k="On complete" v={task.on_complete || "(none)"} />
             <Row k="Save path (edit)" v={saveDir} editable onChange={setSaveDir} />
+            <Row k="Expected SHA-256" v={expectedSha} editable onChange={setExpectedSha} />
+            <div className="kv__row kv__row--full">
+              <dt>Verification</dt>
+              <dd className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <Btn
+                    variant="primary"
+                    onClick={runVerify}
+                    disabled={verifyBusy}
+                  >
+                    {verifyBusy ? "Verifying…" : "Verify SHA-256 now"}
+                  </Btn>
+                  <span className="text-xs text-txt-dim">
+                    Reads the file and hashes it. The expected value above
+                    is compared case-insensitively.
+                  </span>
+                </div>
+                {verifyError && (
+                  <div className="text-xs text-red-400">
+                    {verifyError}
+                  </div>
+                )}
+                {verifyResult && (
+                  <div className="rounded border border-white/10 bg-white/[0.02] p-2 text-xs">
+                    <div>
+                      <span className="text-txt-dim">Algorithm:</span>{" "}
+                      {verifyResult.algorithm}
+                    </div>
+                    <div>
+                      <span className="text-txt-dim">File size:</span>{" "}
+                      {formatBytes(verifyResult.file_size)}
+                    </div>
+                    <div className="break-all">
+                      <span className="text-txt-dim">Computed:</span>{" "}
+                      <code>{verifyResult.computed}</code>
+                    </div>
+                    {verifyResult.expected ? (
+                      <div>
+                        <span className="text-txt-dim">Expected:</span>{" "}
+                        <code>{verifyResult.expected}</code>
+                      </div>
+                    ) : (
+                      <div className="text-txt-dim">
+                        No expected digest entered — actual recorded only.
+                      </div>
+                    )}
+                    <div className="mt-1 text-sm font-medium">
+                      {verifyResult.matches === true && (
+                        <span className="text-emerald-400">
+                          ✓ Verified — checksum matches.
+                        </span>
+                      )}
+                      {verifyResult.matches === false && (
+                        <span className="text-red-400">
+                          ✕ Mismatch — file does not match expected digest.
+                        </span>
+                      )}
+                      {verifyResult.matches === null && (
+                        <span className="text-txt-dim">
+                          No expected digest; recorded the actual hash.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </dd>
+            </div>
           </dl>
         )}
       </div>

@@ -19,7 +19,8 @@
         "minWidth": 960,
         "minHeight": 600,
         "resizable": true,
-        "center": true
+        "center": true,
+        "visible": true
       }
     ],
     "security": {
@@ -30,7 +31,36 @@
     "active": true,
     "targets": ["deb", "rpm", "appimage"],
     "category": "Utility",
-    "icon": ["icons/icon.png", "icons/32x32.png", "icons/128x128.png"],
-    "shortDescription": "High-performance download manager"
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "shortDescription": "High-performance download manager",
+    "longDescription": "DownPilot is a high-performance, IDM-class download manager for Linux with chunked transfers, queues, scheduling, site rules, browser capture, and a site grabber.",
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["dpl"],
+        "name": "DownPilot Task List",
+        "description": "DownPilot import file",
+        "role": "Editor"
+      }
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["downpilot"]
+      }
+    },
+    "notification": null
   }
 }
