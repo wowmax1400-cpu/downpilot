@@ -1196,6 +1196,19 @@ pub fn run() {
             std::fs::create_dir_all(&parts_dir).ok();
 
             let (manager, rx) = DownloadManager::new(&db_path, parts_dir);
+            // Dedicated Tokio runtime for all engine background spawns
+            // (task runs, retry timers, pump loop). Sync Tauri commands run
+            // on the main thread where there is no ambient runtime, so
+            // spawning from there MUST go through this handle — see
+            // DownloadManager::spawn_task. Leaked on purpose: it lives for
+            // the whole process.
+            let engine_rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("failed to build engine tokio runtime");
+            manager.install_runtime(engine_rt.handle().clone());
+            std::mem::forget(engine_rt);
             let creds = Arc::new(downpilot_core::credentials::CredentialStore::new(&data_dir));
             // Hand the SAME credential store to the downloader so per-queue
             // auth headers are resolved from the real store (not a stub).

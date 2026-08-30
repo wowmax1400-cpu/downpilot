@@ -78,6 +78,13 @@ pub struct DownloadManager {
     /// itself changes (e.g. user edits the queue's normal speed while
     /// the schedule is active — we still restore to the original).
     scheduled_speed_baseline: Mutex<HashMap<String, u64>>,
+    /// Tokio runtime handle installed at app startup. Sync Tauri
+    /// commands run on the main thread (GTK event loop) where there is
+    /// no ambient runtime context, so `start()`/retry spawns MUST go
+    /// through this handle or they panic. Tests that construct the
+    /// manager inside `#[tokio::test]` leave it `None` and fall back to
+    /// the ambient runtime.
+    rt: Mutex<Option<tokio::runtime::Handle>>,
 }
 
 fn now() -> i64 {
@@ -144,6 +151,7 @@ impl DownloadManager {
             auto_paused: Mutex::new(HashSet::new()),
             scheduled_speed_active: Mutex::new(HashMap::new()),
             scheduled_speed_baseline: Mutex::new(HashMap::new()),
+            rt: Mutex::new(None),
         });
         (m, rx)
     }
@@ -156,6 +164,46 @@ impl DownloadManager {
         self.downloader.set_credentials(creds);
     }
 
+    /// Install the Tokio runtime handle used for all background spawns.
+    /// Must be called once at app startup (from the Tauri setup hook,
+    /// where `tauri::async_runtime`'s runtime exists) before any
+    /// start/resume/retry path can run. Without it, spawning from sync
+    /// commands on the main thread panics with "there is no reactor
+    /// running" and aborts the app (panic inside a GTK callback that
+    /// cannot unwind).
+    pub fn install_runtime(&self, handle: tokio::runtime::Handle) {
+        *self.rt.lock().unwrap() = Some(handle);
+    }
+
+    /// Spawn onto the installed runtime handle, falling back to the
+    /// ambient runtime when none was installed (tests running inside
+    /// `#[tokio::test]`).
+    fn spawn_task<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let handle = self.rt.lock().unwrap().clone();
+        match handle {
+            Some(h) => {
+                h.spawn(fut);
+            }
+            None => match tokio::runtime::Handle::try_current() {
+                Ok(h) => {
+                    h.spawn(fut);
+                }
+                // No ambient runtime (main-thread GTK callback without a
+                // prior install_runtime call). Log instead of panicking —
+                // a panic here is in a function that cannot unwind and
+                // would abort the whole app.
+                Err(_) => {
+                    eprintln!(
+                        "[engine] no tokio runtime available for spawn; install_runtime() was not called"
+                    );
+                }
+            },
+        }
+    }
+
     /// Pump loop: drains internal events, computes speeds, persists progress
     /// to SQLite, forwards to the UI sink, and enforces the schedule window.
     pub fn pump_loop(
@@ -163,7 +211,8 @@ impl DownloadManager {
         mut rx: mpsc::UnboundedReceiver<EngineEvent>,
         sink: mpsc::UnboundedSender<EngineEvent>,
     ) {
-        tokio::spawn(async move {
+        let me = self.clone();
+        me.spawn_task(async move {
             let mut speeds: HashMap<i64, (Instant, i64)> = HashMap::new();
             let mut tick = tokio::time::interval(Duration::from_millis(400));
             loop {
@@ -1178,7 +1227,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         let tx = self.events.clone();
         let task_id = task.id;
         let started = now();
-        tokio::spawn(async move {
+        self.spawn_task(async move {
             let result = me.run_task(task, cancel, tx).await;
             me.finish_task(task_id, result, started);
         });
@@ -1347,7 +1396,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             error: Some(format!("Retrying (attempt {} of {})…", task.retry_count + 1, max_retries)),
         });
         let me = self.clone();
-        tokio::spawn(async move {
+        self.spawn_task(async move {
             tokio::time::sleep(Duration::from_millis(delay as u64)).await;
             if let Some(t) = me.db.get(id).unwrap_or(None) {
                 if t.status == Status::Queued {
