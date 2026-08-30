@@ -28,6 +28,7 @@ import {
   type ColumnId,
 } from "../lib/columnConfig";
 import { ColumnsMenu } from "./ColumnsMenu";
+import { SpeedGraph } from "./SpeedGraph";
 
 export interface DownloadTableProps {
   tasks: DownloadTask[];
@@ -40,7 +41,18 @@ export interface DownloadTableProps {
   /** Double-click on a row → callback with id (used to open Properties
    *  for active downloads, Open File for completed). */
   onRowActivate?: (id: number) => void;
+  onOpenProps?: (id: number) => void;
   groupBy: GroupBy;
+  /** Optional: per-task recent speed samples (oldest first, newest last).
+   *  Used by the `speed_graph` column. The store owns the ring buffer. */
+  speedHistory?: (id: number) => number[];
+  /** Active sidebar filter — used to render the right empty-state message
+   *  (e.g. "All caught up" for the Unfinished view, "No downloads in this
+   *  queue" for a specific queue). */
+  sidebarKey?: { kind: string; value?: string | number };
+  /** Current search query — used to distinguish "no downloads" from
+   *  "no downloads match this search". */
+  search?: string;
 }
 
 export function DownloadTable({
@@ -52,19 +64,59 @@ export function DownloadTable({
   onSelect,
   onContextMenu,
   onRowActivate,
+  onOpenProps,
   groupBy,
+  speedHistory,
+  sidebarKey,
+  search,
 }: DownloadTableProps) {
   const colCfg = useColumnConfig();
   const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number } | null>(null);
 
   if (tasks.length === 0) {
+    // Pick a contextual empty-state message based on the active sidebar
+    // filter. The spec called for compact, IDM-style messages — not
+    // dashboard illustrations.
+    const empty = (() => {
+      if (search) {
+        return {
+          title: "No matches",
+          hint: `No downloads match “${search}”.`,
+        };
+      }
+      switch (sidebarKey?.kind) {
+        case "status":
+          if (sidebarKey.value === "unfinished")
+            return { title: "All caught up", hint: "No unfinished downloads." };
+          if (sidebarKey.value === "finished")
+            return { title: "No history yet", hint: "Completed downloads will appear here." };
+          if (sidebarKey.value === "failed")
+            return { title: "No failures", hint: "Failed downloads will appear here." };
+          if (sidebarKey.value === "paused")
+            return { title: "Nothing paused", hint: "Paused downloads will appear here." };
+          if (sidebarKey.value === "scheduled")
+            return { title: "No scheduled downloads", hint: "Schedule a download from the toolbar." };
+          return { title: "No downloads", hint: "Add one to get started." };
+        case "queue":
+          return { title: "Empty queue", hint: `No downloads in “${sidebarKey.value}”.` };
+        case "category":
+          return { title: "Empty category", hint: `No downloads in “${sidebarKey.value}”.` };
+        case "site":
+          return { title: "No downloads from this site", hint: "Capture a link to add one." };
+        case "schedule":
+          return { title: "Schedule not active", hint: "This scheduled window has no downloads." };
+        case "all":
+        default:
+          return {
+            title: "No downloads yet",
+            hint: "Click Add URL or grab links from a page.",
+          };
+      }
+    })();
     return (
       <div className="flex h-full flex-col items-center justify-center text-center">
-        <div className="text-sm text-txt-dim">No downloads</div>
-        <div className="mt-1 text-xs text-txt-faint">
-          Click <span className="text-txt-dim">Add URL</span> or grab links
-          from a page.
-        </div>
+        <div className="text-sm text-txt-dim">{empty.title}</div>
+        <div className="mt-1 text-xs text-txt-faint">{empty.hint}</div>
       </div>
     );
   }
@@ -94,6 +146,7 @@ export function DownloadTable({
             onSelect={onSelect}
             onContextMenu={onContextMenu}
             onRowActivate={onRowActivate}
+            onOpenProps={onOpenProps}
           />
         ))}
       </div>
@@ -102,6 +155,7 @@ export function DownloadTable({
           cfg={colCfg.cfg}
           onToggle={colCfg.toggle}
           onReset={colCfg.reset}
+          onApplyPreset={colCfg.applyPreset}
           onClose={() => setColumnsMenu(null)}
           x={columnsMenu.x}
           y={columnsMenu.y}
@@ -124,6 +178,7 @@ function Group({
   onSelect,
   onContextMenu,
   onRowActivate,
+  onOpenProps,
 }: {
   groupKey: string;
   items: DownloadTask[];
@@ -133,6 +188,7 @@ function Group({
   onSelect: (id: number, ev: React.MouseEvent) => void;
   onContextMenu: (id: number, x: number, y: number) => void;
   onRowActivate?: (id: number) => void;
+  onOpenProps?: (id: number) => void;
 }) {
   return (
     <>
@@ -154,6 +210,7 @@ function Group({
           onSelect={onSelect}
           onContextMenu={onContextMenu}
           onRowActivate={onRowActivate}
+          onOpenProps={onOpenProps}
         />
       ))}
     </>
@@ -340,6 +397,7 @@ function Row({
   onSelect,
   onContextMenu,
   onRowActivate,
+  onOpenProps,
 }: {
   t: DownloadTask;
   visible: ColumnId[];
@@ -348,6 +406,7 @@ function Row({
   onSelect: (id: number, ev: React.MouseEvent) => void;
   onContextMenu: (id: number, x: number, y: number) => void;
   onRowActivate?: (id: number) => void;
+  onOpenProps?: (id: number) => void;
 }) {
   const iconResult = useMemo(
     () => fileIconFor(t.filename, t.category),
@@ -365,17 +424,53 @@ function Row({
   return (
     <div
       className={
-        "group grid cursor-default items-center gap-x-0 border-b border-white/5 px-3 py-1.5 text-sm transition-colors hover:bg-white/[0.04] " +
-        (selected ? "bg-indigo-500/10" : "")
+        "group relative grid cursor-default items-center gap-x-0 border-b border-white/5 px-3 py-1.5 text-sm transition-colors hover:bg-white/[0.04] " +
+        (selected ? "bg-indigo-500/20 ring-1 ring-inset ring-indigo-400/40" : "")
       }
       style={{ gridTemplateColumns: gridTemplate(widths, visible) }}
-      onClick={(e) => onSelect(t.id, e)}
+      role="row"
+      data-download-id={t.id}
+      aria-selected={selected}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        if (e.pointerType !== "mouse" || (e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey)) {
+          onSelect(t.id, e);
+        }
+      }}
+      onClickCapture={(e) => {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) onSelect(t.id, e);
+      }}
+      onClick={(e) => {
+        if (!(e.shiftKey || e.ctrlKey || e.metaKey)) onSelect(t.id, e);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(t.id, e as unknown as React.MouseEvent);
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onContextMenu(t.id, e.clientX, e.clientY);
       }}
       onDoubleClick={() => onRowActivate?.(t.id)}
     >
+      <button
+        type="button"
+        aria-label={selected ? `Deselect ${t.filename}` : `Select ${t.filename}`}
+        aria-pressed={selected}
+        className={`absolute left-1 top-1/2 z-10 h-4 w-4 -translate-y-1/2 rounded border text-[10px] leading-none ${
+          selected
+            ? "border-indigo-400 bg-indigo-500 text-white"
+            : "border-slate-600 bg-slate-900/80 text-transparent hover:border-indigo-400"
+        }`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(t.id, e);
+        }}
+      >
+        {selected ? "✓" : ""}
+      </button>
       {visible.map((id) => {
         const col = COLUMNS.find((c) => c.id === id)!;
         const align = col.right ? "pr-3" : "pr-3";
@@ -390,6 +485,7 @@ function Row({
               pct,
               numCell,
               dim,
+              widths,
             })}
           </div>
         );
@@ -409,9 +505,11 @@ function renderCell(
     pct: number;
     numCell: string;
     dim: string;
+    widths: Record<ColumnId, number>;
+    speedHistory?: (id: number) => number[];
   }
 ) {
-  const { t, Icon, iconColor, total, done, pct, numCell, dim } = ctx;
+  const { t, Icon, iconColor, total, done, pct, numCell, dim, widths, speedHistory } = ctx;
   switch (id) {
     case "name":
       return (
@@ -428,8 +526,35 @@ function renderCell(
       );
     case "size":
       return <div className={numCell}>{formatBytes(total)}</div>;
-    case "status":
-      return <div className={"text-right text-xs " + statusColor(t.status)}>{statusLabel(t.status)}</div>;
+    case "status": {
+      // For failed downloads, render a richer label that surfaces the
+      // error reason right in the cell: "Failed / HTTP 404" rather than
+      // just "Failed". Hover shows the full error text.
+      let label = statusLabel(t.status);
+      let title: string | undefined;
+      if (t.status === "failed") {
+        if (t.error_code) {
+          label = `${statusLabel(t.status)} / HTTP ${t.error_code}`;
+        }
+        if (t.error) title = t.error;
+      }
+      return (
+        <div
+          className={"text-right text-xs " + statusColor(t.status)}
+          title={title}
+        >
+          {label}
+          {t.force_started && (
+            <span
+              className="ml-1 inline-block rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+              title="Force-started: this task bypassed the normal queue ordering"
+            >
+              FS
+            </span>
+          )}
+        </div>
+      );
+    }
     case "time_left":
       return (
         <div className={numCell}>
@@ -444,6 +569,18 @@ function renderCell(
           {t.status === "downloading" ? formatSpeed(t.speed_bps) : "—"}
         </div>
       );
+    case "speed_graph": {
+      // The store owns the ring buffer; if the parent didn't pass the
+      // reader function, we just render the empty-state baseline. This
+      // keeps the column safe to add even before the store is upgraded.
+      const samples = speedHistory ? speedHistory(t.id) : [];
+      const w = Math.max(24, (widths["speed_graph"] ?? 96) - 8);
+      return (
+        <div className="flex h-full items-center">
+          <SpeedGraph samples={samples} width={w} height={22} />
+        </div>
+      );
+    }
     case "downloaded":
       return <div className={numCell}>{pct}%</div>;
     case "progress":

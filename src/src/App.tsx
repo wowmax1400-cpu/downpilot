@@ -10,6 +10,7 @@ import { MenuBar } from "./components/MenuBar";
 import { Toolbar, type ToolbarAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
+import { DetailsPanel } from "./components/DetailsPanel";
 import { StatusBar } from "./components/StatusBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { AddDownloadDialog } from "./components/AddDownloadDialog";
@@ -21,6 +22,7 @@ import { QueuesPanel } from "./components/QueuesPanel";
 import { AboutDialog } from "./components/AboutDialog";
 import { BatchDialog } from "./components/BatchDialog";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { useI18n } from "./i18n";
 import * as api from "./lib/api";
 
 /** Extract plausible URLs from arbitrary text (one per line). */
@@ -44,6 +46,7 @@ function looksLikeUrl(s: string): boolean {
 
 export default function App() {
   const store = useDownloads();
+  const { t } = useI18n();
 
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState<string | undefined>(undefined);
@@ -98,13 +101,13 @@ export default function App() {
   const renameSelected = useCallback(() => {
     const ids = Array.from(store.selected);
     if (ids.length === 0) return;
-    const t = store.tasks.find((x) => x.id === ids[0]);
-    if (!t) return;
-    const next = window.prompt("Rename to:", t.filename);
-    if (next && next.trim() && next !== t.filename) {
-      void store.rename(t.id, next.trim());
+    const task = store.tasks.find((x) => x.id === ids[0]);
+    if (!task) return;
+    const next = window.prompt(t("prompt.renameTo"), task.filename);
+    if (next && next.trim() && next !== task.filename) {
+      void store.rename(task.id, next.trim());
     }
-  }, [store]);
+  }, [store, t]);
 
   // ---- Drag and drop (Tauri webview events) ----
   // On drop we look at `payload.urls` (text/uri-list) and `payload.paths`
@@ -265,7 +268,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [store, onRowActivate, renameSelected]);
+  }, [store, onRowActivate, renameSelected, t]);
 
   const handleToolbar = useCallback(
     (a: ToolbarAction) => {
@@ -279,6 +282,15 @@ export default function App() {
           break;
         case "start":
           store.bulk((id) => store.resume(id));
+          break;
+        case "startAll":
+          void store.resumeAll();
+          break;
+        case "retryFailed":
+          void store.retryAll();
+          break;
+        case "recheck":
+          store.bulk((id) => store.recheck(id));
           break;
         case "pause":
           store.bulk((id) => store.pause(id));
@@ -296,7 +308,7 @@ export default function App() {
           void store.stopAll();
           break;
         case "deleteAll":
-          if (window.confirm("Delete all completed downloads?")) {
+          if (window.confirm(t("confirm.deleteAllCompleted"))) {
             void store.clearFinished();
           }
           break;
@@ -334,7 +346,10 @@ export default function App() {
         onSettings={() => setOptionsOpen(true)}
         onHistory={() => setHistoryOpen(true)}
         onAbout={() => setAboutOpen(true)}
-        onOpenProps={() => setPropsId(0)}
+        onOpenProps={() => {
+          const id = Array.from(store.selected)[0];
+          if (id !== undefined) setPropsId(id);
+        }}
       />
       <Toolbar store={store} onAction={handleToolbar} />
       <div className="flex min-h-0 flex-1">
@@ -359,18 +374,30 @@ export default function App() {
             onContextMenu={onRowContext}
             onRowActivate={onRowActivate}
             groupBy={store.groupBy}
+            speedHistory={store.getSpeedHistory}
+            sidebarKey={store.sidebarKey}
+            search={store.search}
           />
        </main>
-     </div>
+        {/* Phase 3A: mount DetailsPanel for the selected download. Was
+            imported-but-dead; now lives to the right of the table
+            and shows quick info (filename, size, status, speed, ETA,
+            category, queue, source, destination) without forcing the
+            user to open the full Properties dialog. */}
+        <DetailsPanel
+          store={store}
+          onOpenProps={(id) => setPropsId(id)}
+        />
+      </div>
       <StatusBar store={store} />
 
       {dragHover && (
         <div className="drop-overlay" aria-hidden>
           <div className="drop-overlay__box">
-            <div className="drop-overlay__icon">Drop URL or URL-list file</div>
+            <div className="drop-overlay__icon">{t("drop.title")}</div>
             <div className="drop-overlay__sub">
-              Drop a single URL to open Add Download.<br />
-              Drop multiple URLs or a .txt list to open Batch.
+              {t("drop.sub1")}<br />
+              {t("drop.sub2")}
            </div>
          </div>
        </div>
@@ -412,16 +439,20 @@ export default function App() {
           onClose={() => setGrabberOpen(false)}
           onGrab={async (url, rules, limit) => await store.grabSiteWithRules(url, limit, rules)}
           onAdd={(links) => {
-            for (const l of links) {
-              void store.add({
-                url: l.url,
-                filename: l.filename,
-                category: l.category,
-                queue: l.queue,
-                save_dir: l.save_dir || undefined,
-                start_immediately: true,
-              });
-            }
+            // Phase 3C: hand the whole selected set to addBatch so
+            // a single bad URL doesn't abort the rest and so the
+            // user gets per-row results back. Each link carries
+            // its own queue / category / save_dir as chosen in
+            // the grabber table.
+            const nds = links.map((l) => ({
+              url: l.url,
+              filename: l.filename,
+              category: l.category ?? undefined,
+              queue: l.queue ?? undefined,
+              save_dir: l.save_dir || undefined,
+              start_immediately: true,
+            }));
+            void store.addBatch(nds);
           }}
           queues={(store.queues ?? []).map((q) => ({ name: q.name, label: q.label }))}
           categories={(store.categories ?? []).map((c) => ({ name: c.name, label: c.label }))}
