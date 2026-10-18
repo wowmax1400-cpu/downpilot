@@ -1,0 +1,7 @@
+{
+  "name": "com.downpilot.nmh",
+  "description": "DownPilot native messaging host (relay to local TCP socket) — Firefox variant",
+  "path": "/home/amir/.local/bin/downpilot-nmh",
+  "type": "stdio",
+  "allowed_extensions": ["downpilot@local"]
+}

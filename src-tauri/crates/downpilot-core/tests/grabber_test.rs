@@ -69,14 +69,20 @@ async fn default_rules_keep_downloads_drop_html_assets() {
     // Keep set: iso, mp4, mp4, zip, mp3, pdf, srt, zip, zip, zip
     // Drop set: png, css, js (excluded)
     let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
-    assert!(urls.iter().any(|u| u.ends_with("ubuntu-22.04.iso")), "iso kept");
+    assert!(
+        urls.iter().any(|u| u.ends_with("ubuntu-22.04.iso")),
+        "iso kept"
+    );
     assert!(urls.iter().any(|u| u.ends_with("movie-1080p.mp4")));
     assert!(urls.iter().any(|u| u.ends_with("movie-720p.mp4")));
     assert!(urls.iter().any(|u| u.ends_with("album.zip")));
     assert!(urls.iter().any(|u| u.ends_with("track.mp3")));
     assert!(urls.iter().any(|u| u.ends_with("book.pdf")));
     // SRT is NOT in the include list by default — must be dropped.
-    assert!(!urls.iter().any(|u| u.ends_with("subtitles.srt")), "srt not in defaults: must be dropped");
+    assert!(
+        !urls.iter().any(|u| u.ends_with("subtitles.srt")),
+        "srt not in defaults: must be dropped"
+    );
     // HTML assets must be dropped.
     assert!(!urls.iter().any(|u| u.ends_with("logo.png")));
     assert!(!urls.iter().any(|u| u.ends_with("style.css")));
@@ -179,9 +185,13 @@ async fn relative_urls_are_resolved_against_page() {
     let (mgr, _rx) = DownloadManager::new(&db_path, state_dir);
     let links = mgr.grab_site(&url, 100).await.unwrap();
     // "/relative/relative.zip" should resolve against the page
-    assert!(links.iter().any(|l| l.url == format!("http://127.0.0.1:{port}/relative/relative.zip")));
+    assert!(links
+        .iter()
+        .any(|l| l.url == format!("http://127.0.0.1:{port}/relative/relative.zip")));
     // "//cdn.example.com/files/cdn.zip" should inherit the http scheme
-    assert!(links.iter().any(|l| l.url == "http://cdn.example.com/files/cdn.zip"));
+    assert!(links
+        .iter()
+        .any(|l| l.url == "http://cdn.example.com/files/cdn.zip"));
 }
 
 #[tokio::test]
@@ -237,7 +247,9 @@ async fn non_success_status_returns_error() {
     let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
-            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
         }
     });
     let url = format!("http://127.0.0.1:{port}/page.html");
@@ -247,5 +259,8 @@ async fn non_success_status_returns_error() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let (mgr, _rx) = DownloadManager::new(&db_path, state_dir);
     let res = mgr.grab_site(&url, 100).await;
-    assert!(res.is_err(), "404 must surface as an error, not an empty list");
+    assert!(
+        res.is_err(),
+        "404 must surface as an error, not an empty list"
+    );
 }

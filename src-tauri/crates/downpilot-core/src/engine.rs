@@ -13,11 +13,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use chrono::{Datelike, Local, Timelike};
 use tokio::sync::mpsc;
 
-use crate::db::{DownloadMeta, Db};
+use crate::db::{Db, DownloadMeta};
 use crate::download::ChunkDownloader;
 use crate::models::{
-    AppSettings, Category, DownloadQueue, DownloadTask, EngineEvent, GrabbedLink,
-    NewDownload, Schedule, SiteRule, Status,
+    AppSettings, Category, DownloadQueue, DownloadTask, EngineEvent, GrabbedLink, NewDownload,
+    Schedule, SiteRule, Status,
 };
 use crate::ytdlp::{self, YtDlp};
 
@@ -95,7 +95,9 @@ fn now() -> i64 {
 }
 
 fn validate_task_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let Some(proxy) = proxy_url.filter(|p| !p.is_empty()) else { return Ok(()); };
+    let Some(proxy) = proxy_url.filter(|p| !p.is_empty()) else {
+        return Ok(());
+    };
     let parsed = reqwest::Url::parse(proxy).map_err(|e| format!("invalid proxy URL: {e}"))?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("proxy credentials must use a secure credential reference, not a URL".into());
@@ -127,7 +129,32 @@ impl DownloadManager {
                         parts.push(s.to_string());
                         src = s.source();
                     }
-                    parts.join(": ")
+                    let full = parts.join(": ");
+                    // A peer that ends the transfer without a clean
+                    // shutdown produces a huge rustls/hyper chain that
+                    // reads like a TLS misconfiguration to the user.
+                    // The UI gets a short actionable sentence plus only
+                    // the innermost technical cause (the actual kernel of
+                    // the failure, which also keeps the classifier's
+                    // markers intact); the complete chain is logged so
+                    // the original error information is never lost.
+                    let low = full.to_lowercase();
+                    if crate::models::is_abrupt_close_msg(&low)
+                        || crate::models::is_cert_failure_msg(&low)
+                    {
+                        eprintln!("[engine] transport error detail: {full}");
+                        let innermost = parts.last().cloned().unwrap_or_default();
+                        if crate::models::is_cert_failure_msg(&low) {
+                            return format!("Certificate verification failed. ({innermost})");
+                        }
+                        return format!("Connection closed unexpectedly. ({innermost})");
+                    }
+                    full
+                }
+                // IncompleteBody is our own abrupt-close signal from the
+                // downloader; keep the message short and actionable.
+                crate::download::DownloadError::IncompleteBody => {
+                    "Connection closed before the download completed.".to_string()
                 }
                 other => other.to_string(),
             },
@@ -136,7 +163,10 @@ impl DownloadManager {
         }
     }
 
-    pub fn new(db_path: &Path, state_dir: PathBuf) -> (Arc<Self>, mpsc::UnboundedReceiver<EngineEvent>) {
+    pub fn new(
+        db_path: &Path,
+        state_dir: PathBuf,
+    ) -> (Arc<Self>, mpsc::UnboundedReceiver<EngineEvent>) {
         let db = Db::open(db_path).expect("failed to open database");
         let speed_limit = Arc::new(AtomicU64::new(0));
         let downloader = Arc::new(ChunkDownloader::new(state_dir.clone(), speed_limit.clone()));
@@ -219,7 +249,12 @@ impl DownloadManager {
                 tick.tick().await;
                 while let Ok(ev) = rx.try_recv() {
                     let fwd = match &ev {
-                        EngineEvent::Progress { id, downloaded, total, .. } => {
+                        EngineEvent::Progress {
+                            id,
+                            downloaded,
+                            total,
+                            ..
+                        } => {
                             if *id < 0 {
                                 continue;
                             }
@@ -235,7 +270,7 @@ impl DownloadManager {
                                 }
                             }
                             let now_t = Instant::now();
-                            let speed = match speeds.get(&id) {
+                            let speed = match speeds.get(id) {
                                 Some((last_t, last_b)) => {
                                     let dt = now_t.duration_since(*last_t).as_secs_f64();
                                     if dt >= 0.4 {
@@ -243,7 +278,7 @@ impl DownloadManager {
                                         speeds.insert(*id, (now_t, *downloaded));
                                         s
                                     } else {
-                                        speeds.get(&id).map(|_| 0.0).unwrap_or(0.0)
+                                        0.0
                                     }
                                 }
                                 None => {
@@ -251,8 +286,19 @@ impl DownloadManager {
                                     0.0
                                 }
                             };
-                            let _ = self.db.update_progress(*id, *downloaded, *downloaded, *total, speed);
-                            EngineEvent::Progress { id: *id, downloaded: *downloaded, total: *total, speed_bps: speed }
+                            let _ = self.db.update_progress(
+                                *id,
+                                *downloaded,
+                                *downloaded,
+                                *total,
+                                speed,
+                            );
+                            EngineEvent::Progress {
+                                id: *id,
+                                downloaded: *downloaded,
+                                total: *total,
+                                speed_bps: speed,
+                            }
                         }
                         _ => ev.clone(),
                     };
@@ -351,7 +397,8 @@ impl DownloadManager {
                     "start" => should_run = should_run && active,
                     "stop" => should_run = should_run && !active,
                     "set_bw" if active => {
-                        self.downloader.set_queue_speed(q.name.clone(), s.bandwidth_kbps as u64);
+                        self.downloader
+                            .set_queue_speed(q.name.clone(), s.bandwidth_kbps as u64);
                     }
                     _ => {}
                 }
@@ -364,7 +411,10 @@ impl DownloadManager {
             if !run && t.status == Status::Downloading {
                 let _ = self.pause(t.id);
                 self.auto_paused.lock().unwrap().insert(t.id);
-            } else if run && self.auto_paused.lock().unwrap().remove(&t.id) && t.status == Status::Paused {
+            } else if run
+                && self.auto_paused.lock().unwrap().remove(&t.id)
+                && t.status == Status::Paused
+            {
                 self.start(t.clone());
             }
         }
@@ -394,11 +444,7 @@ impl DownloadManager {
         let mut active_id: HashMap<String, i64> = HashMap::new();
         // Sorted candidate list: (priority desc, id asc).
         let mut candidates: Vec<&Schedule> = schedules.iter().filter(|s| s.enabled).collect();
-        candidates.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then_with(|| a.id.cmp(&b.id))
-        });
+        candidates.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
 
         for s in &candidates {
             let active = self.schedule_active_now(s);
@@ -406,10 +452,8 @@ impl DownloadManager {
                 continue;
             }
             // Parse per-queue overrides; ignore malformed entries.
-            let parsed: HashMap<String, i64> = match serde_json::from_str(&s.overrides_json) {
-                Ok(v) => v,
-                Err(_) => HashMap::new(),
-            };
+            let parsed: HashMap<String, i64> =
+                serde_json::from_str(&s.overrides_json).unwrap_or_default();
             for (qname, kbps) in parsed {
                 // First-wins within this iteration is fine because
                 // candidates are pre-sorted by priority (and tie-break
@@ -455,8 +499,7 @@ impl DownloadManager {
                     if !active_now.contains_key(&qname) {
                         baseline.insert(qname.clone(), configured_kbps);
                     }
-                    self.downloader
-                        .set_queue_speed(qname.clone(), *kbps * 1024);
+                    self.downloader.set_queue_speed(qname.clone(), *kbps * 1024);
                     active_now.insert(qname.clone(), *kbps);
                 }
                 None => {
@@ -465,11 +508,8 @@ impl DownloadManager {
                     // schedule was running, the schedule "leaves"
                     // without overwriting — the user's new setting
                     // sticks.
-                    let prev = baseline
-                        .remove(&qname)
-                        .unwrap_or(configured_kbps);
-                    self.downloader
-                        .set_queue_speed(qname.clone(), prev * 1024);
+                    let prev = baseline.remove(&qname).unwrap_or(configured_kbps);
+                    self.downloader.set_queue_speed(qname.clone(), prev * 1024);
                     active_now.remove(&qname);
                     active_id.remove(&qname);
                 }
@@ -533,11 +573,7 @@ impl DownloadManager {
         let schedules = self.db.list_schedules().unwrap_or_default();
         let mut candidates: Vec<&crate::models::Schedule> =
             schedules.iter().filter(|s| s.enabled).collect();
-        candidates.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then_with(|| a.id.cmp(&b.id))
-        });
+        candidates.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
         for s in &candidates {
             if !self.schedule_active_now(s) {
                 continue;
@@ -577,10 +613,7 @@ impl DownloadManager {
         for q in &queues {
             let (active, queued) = per_q.get(&q.name).copied().unwrap_or((0, 0));
             let configured_kbps = q.speed_limit_kbps.max(0) as u64;
-            let current_kbps = active_map
-                .get(&q.name)
-                .copied()
-                .unwrap_or(configured_kbps);
+            let current_kbps = active_map.get(&q.name).copied().unwrap_or(configured_kbps);
             // Own-schedule window: if the queue has its own
             // `schedule_enabled` flag set, return true when the
             // engine is currently inside [start, end]. This is the
@@ -594,9 +627,11 @@ impl DownloadManager {
             // auth badge: at least one queued (or running) task has a
             // non-empty auth_ref OR the queue itself declares
             // auth_user/auth_ref metadata.
-            let auth_configured = !q.auth_user.is_empty() || !q.auth_ref.is_empty()
+            let auth_configured = !q.auth_user.is_empty()
+                || !q.auth_ref.is_empty()
                 || tasks.iter().any(|t| {
-                    t.queue == q.name && (t.status == Status::Queued || t.status == Status::Downloading)
+                    t.queue == q.name
+                        && (t.status == Status::Queued || t.status == Status::Downloading)
                         && !q.auth_ref.is_empty()
                 });
             out_q.push(crate::models::QueueStatus {
@@ -616,7 +651,11 @@ impl DownloadManager {
         }
         // Sort the snapshot in the same order govern_concurrency uses:
         // by (priority asc, name asc).
-        out_q.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.queue.cmp(&b.queue)));
+        out_q.sort_by(|a, b| {
+            a.priority
+                .cmp(&b.priority)
+                .then_with(|| a.queue.cmp(&b.queue))
+        });
 
         let settings = self.settings();
         crate::models::SchedulerStatus {
@@ -695,28 +734,31 @@ impl DownloadManager {
     // -------------------------------------------------------------------
 
     /// Precedence chain enforced by the scheduler.
-///
-/// `govern_concurrency` and `force_start` both use this function so
-/// the precedence is identical everywhere a candidate is picked.
-///
-/// Tie-break order (lower key = earlier promotion):
-///   1. force_started desc (true first)  — explicit user bypass
-///   2. queue.priority asc               — higher queue priority first
-///   3. task.priority desc               — High (+10) wins over Low (-10)
-///   4. created_at asc                   — older wins ties
-///   5. id asc                           — final deterministic tie
-///
-/// Lower-priority downloads still get scheduled — they only lose to
-/// higher-priority ones within the available concurrency slots.
-pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32, i32, i64, i64) {
-    let qprio = queues
-        .iter()
-        .find(|q| q.name == t.queue)
-        .map(|q| q.priority)
-        .unwrap_or(0);
-    let force = if t.force_started { 0 } else { 1 };
-    (force, qprio, -t.priority, t.created_at, t.id)
-}
+    ///
+    /// `govern_concurrency` and `force_start` both use this function so
+    /// the precedence is identical everywhere a candidate is picked.
+    ///
+    /// Tie-break order (lower key = earlier promotion):
+    ///   1. force_started desc (true first)  — explicit user bypass
+    ///   2. queue.priority asc               — higher queue priority first
+    ///   3. task.priority desc               — High (+10) wins over Low (-10)
+    ///   4. created_at asc                   — older wins ties
+    ///   5. id asc                           — final deterministic tie
+    ///
+    /// Lower-priority downloads still get scheduled — they only lose to
+    /// higher-priority ones within the available concurrency slots.
+    pub fn schedule_sort_key(
+        t: &DownloadTask,
+        queues: &[DownloadQueue],
+    ) -> (u8, i32, i32, i64, i64) {
+        let qprio = queues
+            .iter()
+            .find(|q| q.name == t.queue)
+            .map(|q| q.priority)
+            .unwrap_or(0);
+        let force = if t.force_started { 0 } else { 1 };
+        (force, qprio, -t.priority, t.created_at, t.id)
+    }
 
     /// Enforce the global + per-queue maximum simultaneous downloads.
     ///
@@ -747,7 +789,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         }
 
         // Promote queued downloads that respect their limits.
-        let mut queued: Vec<&DownloadTask> = tasks.iter().filter(|t| t.status == Status::Queued).collect();
+        let mut queued: Vec<&DownloadTask> = tasks
+            .iter()
+            .filter(|t| t.status == Status::Queued)
+            .collect();
         // Phase 3B precedence: force_started > queue.priority > task.priority > created_at.
         queued.sort_by_key(|t| Self::schedule_sort_key(t, &queues));
 
@@ -908,7 +953,8 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             None => self.resolve_save_dir(&nd),
         };
         if !Path::new(&save_dir).exists() {
-            std::fs::create_dir_all(&save_dir).map_err(|e| format!("cannot create save dir: {e}"))?;
+            std::fs::create_dir_all(&save_dir)
+                .map_err(|e| format!("cannot create save dir: {e}"))?;
         }
         // Disk space pre-check.
         if let Some(needed) = self.estimate_size(&nd) {
@@ -942,7 +988,8 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                     let _ = self.db.set_category(id, &site.category);
                 }
                 if site.bandwidth_kbps > 0 && !site.queue.is_empty() {
-                    self.downloader.set_queue_speed(site.queue.clone(), site.bandwidth_kbps as u64);
+                    self.downloader
+                        .set_queue_speed(site.queue.clone(), site.bandwidth_kbps as u64);
                 }
                 if nd.user_agent.is_none() && !site.user_agent.is_empty() {
                     let _ = self.db.set_user_agent(id, &site.user_agent);
@@ -956,7 +1003,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             let _ = self.events.send(EngineEvent::Added { task: task.clone() });
             if nd.start_immediately {
                 // Respect concurrency immediately.
-                let _ = self.govern_concurrency();
+                self.govern_concurrency();
             }
             // Probe the server synchronously so the response carries the real
             // total_size and the downloader doesn't re-probe on every run.
@@ -968,55 +1015,91 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             // without a synchronous probe; the downloader's normal byte-flow
             // path will surface 404/403/etc. when bytes start flowing.
             if !nd.skip_probe {
-            let me = self.clone();
-            let id2 = id;
-            let url = task.url.clone();
-            let filename_hint = task.filename.clone();
-            let proxy = self.resolve_proxy(&task)?;
-            let headers = DownloadTask {
-                user_agent: task.user_agent.clone(),
-                referer: task.referer.clone(),
-                cookies: task.cookies.clone(),
-                proxy_url: proxy,
-                ..DownloadTask::default_for_probe(&url, &filename_hint)
-            };
-            let probe_result = me.downloader.probe(&headers).await;
-            if let Ok((total, _range, suggested, content_type)) = probe_result {
-                let mut changed = false;
-                if let Some(better) = suggested {
-                    if better != filename_hint && !better.is_empty() {
-                        let _ = me.db.set_filename(id2, &better);
+                let me = self.clone();
+                let id2 = id;
+                let url = task.url.clone();
+                let filename_hint = task.filename.clone();
+                let proxy = self.resolve_proxy(&task)?;
+                // FTP: no HTTP HEAD; SIZE + URL filename gives the same
+                // (total_size, suggested filename, resume flag) the HTTP
+                // path would.
+                if url.trim_start().to_ascii_lowercase().starts_with("ftp://") {
+                    match crate::ftp::probe_ftp(&url, Some(&save_dir)).await {
+                        Ok(info) => {
+                            let mut changed = false;
+                            if info.filename != filename_hint && !info.filename.is_empty() {
+                                let _ = me.db.set_filename(id2, &info.filename);
+                                changed = true;
+                            }
+                            if info.size > 0 {
+                                let _ = me.db.set_total_size(id2, info.size);
+                                changed = true;
+                            }
+                            if changed {
+                                if let Some(t) = me.db.get(id2).unwrap_or(None) {
+                                    let _ = me.events.send(EngineEvent::Finished { task: t });
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // Mirrors the HTTP probe failure path: mark the
+                            // task failed with the reason so the UI shows why.
+                            let _ = me.db.set_status(id2, Status::Failed, Some(&e));
+                            let _ = me.events.send(EngineEvent::StatusChanged {
+                                id: id2,
+                                status: Status::Failed,
+                                error: Some(e),
+                            });
+                        }
+                    }
+                    return Ok(id);
+                }
+                let headers = DownloadTask {
+                    user_agent: task.user_agent.clone(),
+                    referer: task.referer.clone(),
+                    cookies: task.cookies.clone(),
+                    proxy_url: proxy,
+                    ..DownloadTask::default_for_probe(&url, &filename_hint)
+                };
+                let probe_result = me.downloader.probe(&headers).await;
+                if let Ok((total, _range, suggested, content_type)) = probe_result {
+                    let mut changed = false;
+                    if let Some(better) = suggested {
+                        if better != filename_hint && !better.is_empty() {
+                            let _ = me.db.set_filename(id2, &better);
+                            changed = true;
+                        }
+                    }
+                    if total.unwrap_or(0) > 0 {
+                        let _ = me.db.set_total_size(id2, total.unwrap());
                         changed = true;
                     }
-                }
-                if total.unwrap_or(0) > 0 {
-                    let _ = me.db.set_total_size(id2, total.unwrap());
-                    changed = true;
-                }
-                if let Some(ct) = content_type {
-                    if !ct.is_empty() {
-                        let _ = me.db.set_content_type(id2, Some(&ct));
-                        changed = true;
+                    if let Some(ct) = content_type {
+                        if !ct.is_empty() {
+                            let _ = me.db.set_content_type(id2, Some(&ct));
+                            changed = true;
+                        }
                     }
-                }
-                if changed {
-                    if let Some(t) = me.db.get(id2).unwrap_or(None) {
-                        let _ = me.events.send(EngineEvent::Finished { task: t });
+                    if changed {
+                        if let Some(t) = me.db.get(id2).unwrap_or(None) {
+                            let _ = me.events.send(EngineEvent::Finished { task: t });
+                        }
                     }
+                } else if let Err(e) = probe_result {
+                    // Probe failed (404, 403, network error). Mark the task
+                    // Failed immediately so the UI reflects reality, and
+                    // skip starting the download. Use `error_string` so a
+                    // reqwest source chain (EOF/truncation/TLS details) is
+                    // both classified correctly and shortened for the UI.
+                    let err_str = Self::error_string(&TaskError::Download(e));
+                    let _ = me.db.set_status(id2, Status::Failed, Some(&err_str));
+                    let _ = me.events.send(EngineEvent::StatusChanged {
+                        id: id2,
+                        status: Status::Failed,
+                        error: Some(err_str.clone()),
+                    });
+                    return Err(err_str);
                 }
-            } else if let Err(e) = probe_result {
-                // Probe failed (404, 403, network error). Mark the task
-                // Failed immediately so the UI reflects reality, and
-                // skip starting the download.
-                let err_str = e.to_string();
-                let _ = me.db.set_status(id2, Status::Failed, Some(&err_str));
-                let _ = me.events.send(EngineEvent::StatusChanged {
-                    id: id2,
-                    status: Status::Failed,
-                    error: Some(err_str.clone()),
-                });
-                return Err(err_str);
-            }
             } // end if !nd.skip_probe
         }
         Ok(id)
@@ -1044,7 +1127,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             .category
             .as_deref()
             .filter(|name| !name.is_empty())
-            .or_else(|| site.as_ref().map(|s| s.category.as_str()).filter(|name| !name.is_empty()));
+            .or_else(|| {
+                site.as_ref()
+                    .map(|s| s.category.as_str())
+                    .filter(|name| !name.is_empty())
+            });
         if let Some(cat_name) = effective_category {
             if let Some(c) = self.category(cat_name) {
                 if !c.save_dir.is_empty() {
@@ -1053,7 +1140,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             }
         }
         // Generic category guess from filename.
-        let fname = nd.filename.clone().unwrap_or_else(|| crate::db::guess_filename(&nd.url));
+        let fname = nd
+            .filename
+            .clone()
+            .unwrap_or_else(|| crate::db::guess_filename(&nd.url));
         let cat = crate::db::guess_category(&fname);
         if let Some(c) = self.category(&cat) {
             if !c.save_dir.is_empty() {
@@ -1127,7 +1217,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     }
 
     fn category(self: &Arc<Self>, name: &str) -> Option<Category> {
-        self.db.list_categories().ok()?.into_iter().find(|c| c.name == name)
+        self.db
+            .list_categories()
+            .ok()?
+            .into_iter()
+            .find(|c| c.name == name)
     }
 
     /// Resolve the effective proxy without mutating global downloader state.
@@ -1174,10 +1268,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     /// Returns one `Result` per input `nd`, in order. Successes
     /// carry the new task id; failures carry the engine's error
     /// string.
-    pub async fn add_batch(
-        self: &Arc<Self>,
-        nds: Vec<NewDownload>,
-    ) -> Vec<Result<i64, String>> {
+    pub async fn add_batch(self: &Arc<Self>, nds: Vec<NewDownload>) -> Vec<Result<i64, String>> {
         let mut out = Vec::with_capacity(nds.len());
         for nd in nds {
             out.push(self.add(nd).await);
@@ -1200,27 +1291,56 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         let settings = self.settings();
         let global_max = settings.max_simultaneous.unwrap_or(0) as usize;
         let tasks = self.list();
-        let global_running = tasks.iter().filter(|t| t.status == Status::Downloading).count();
-        let q_running = tasks.iter().filter(|t| t.status == Status::Downloading && t.queue == task.queue).count();
+        let global_running = tasks
+            .iter()
+            .filter(|t| t.status == Status::Downloading)
+            .count();
+        let q_running = tasks
+            .iter()
+            .filter(|t| t.status == Status::Downloading && t.queue == task.queue)
+            .count();
         let queues = self.db.list_queues().unwrap_or_default();
-        let q_enabled = queues.iter().find(|q| q.name == task.queue).map(|q| q.enabled).unwrap_or(true);
-        let q_max = queues.iter().find(|q| q.name == task.queue).map(|q| q.max_simultaneous as usize).unwrap_or(3);
+        let q_enabled = queues
+            .iter()
+            .find(|q| q.name == task.queue)
+            .map(|q| q.enabled)
+            .unwrap_or(true);
+        let q_max = queues
+            .iter()
+            .find(|q| q.name == task.queue)
+            .map(|q| q.max_simultaneous as usize)
+            .unwrap_or(3);
 
         // Disabled queue: park as Queued. `set_queue_enabled(true)` will
         // re-run `govern_concurrency`, which will promote it.
         if !q_enabled {
             let _ = self.db.set_status(task.id, Status::Queued, None);
-            let _ = self.events.send(EngineEvent::StatusChanged { id: task.id, status: Status::Queued, error: None });
+            let _ = self.events.send(EngineEvent::StatusChanged {
+                id: task.id,
+                status: Status::Queued,
+                error: None,
+            });
             return;
         }
 
         if (global_max != 0 && global_running >= global_max) || q_running >= q_max {
             let _ = self.db.set_status(task.id, Status::Queued, None);
-            let _ = self.events.send(EngineEvent::StatusChanged { id: task.id, status: Status::Queued, error: None });
+            let _ = self.events.send(EngineEvent::StatusChanged {
+                id: task.id,
+                status: Status::Queued,
+                error: None,
+            });
             return;
         }
 
         let _ = self.db.set_status(task.id, Status::Downloading, None);
+        // Persist the first-start timestamp (only when unset — a resume
+        // must keep the ORIGINAL start so the average speed reflects the
+        // full wall-clock lifetime of the download). finish_complete()
+        // reads this to compute avg_speed_bps.
+        if task.started_at.is_none() {
+            let _ = self.db.set_started_at(task.id, now());
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancels.lock().unwrap().insert(task.id, cancel.clone());
         let me = self.clone();
@@ -1248,6 +1368,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         task.proxy_url = self
             .resolve_proxy(&task)
             .map_err(|e| TaskError::Download(crate::download::DownloadError::InvalidProxy(e)))?;
+        // Mirror/multi-source: pull from whichever source the rotation
+        // index points at. Index 0 (the default) is the primary URL, so
+        // a task with no mirrors behaves exactly as before.
+        task.url = task.active_url();
         let is_original = task.format_id.as_deref() == Some("original");
         if task.format_id.is_some() && !is_original {
             let proxy = task.proxy_url.as_deref().filter(|p| !p.is_empty());
@@ -1258,7 +1382,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 task.referer.as_deref(),
                 task.user_agent.as_deref(),
                 task.cookies.as_deref(),
-                proxy.as_deref(),
+                proxy,
                 cancel.clone(),
                 tx.clone(),
             )
@@ -1267,7 +1391,23 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             let _ = path;
             return Ok(0);
         }
-        self.downloader.run(task, cancel, tx).await.map_err(TaskError::from)
+        // FTP URLs bypass the HTTP downloader entirely: different protocol
+        // mechanics (RETR/REST instead of Range), same progress/finalize
+        // events so the rest of the pipeline is agnostic.
+        if task
+            .url
+            .trim_start() // tolerate leading whitespace pasted from a page
+            .to_ascii_lowercase()
+            .starts_with("ftp://")
+        {
+            return crate::ftp::run_ftp(task, cancel, tx)
+                .await
+                .map_err(TaskError::Download);
+        }
+        self.downloader
+            .run(task, cancel, tx)
+            .await
+            .map_err(TaskError::from)
     }
 
     fn finish_task(self: &Arc<Self>, id: i64, result: Result<u64, TaskError>, started: i64) {
@@ -1288,42 +1428,105 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                     .as_ref()
                     .map(|t| t.total_size.max(*n as i64))
                     .unwrap_or(*n as i64);
-                // Single atomic write: downloaded + total + status +
-                // completed_at all flip together. No torn state on crash.
-                let _ = self.db.finish_complete(id, *n as i64, total);
-                // Integrity verification if a hash is configured.
+                // Verify integrity before marking the task complete. A
+                // mismatch or hashing failure must never trigger completion
+                // actions or category routing.
                 if let Some(task) = db_task {
                     if !task.checksum_value.is_empty() || task.expected_sha256.is_some() {
-                        if let Some(final_path) = self.final_path(&task) {
-                            if let Ok(got) = hash_file(&final_path, &task.checksum_algorithm) {
-                                let expected = task
-                                    .expected_sha256
-                                    .clone()
-                                    .filter(|s| !s.is_empty())
-                                    .or_else(|| Some(task.checksum_value.clone()))
-                                    .unwrap_or_default();
-                                let ok = !expected.is_empty() && got.eq_ignore_ascii_case(&expected);
-                                let _ = self.db.set_meta(id, &DownloadMeta {
-                                    checksum_verified: ok,
-                                    checksum_value: got,
-                                    checksum_algorithm: task.checksum_algorithm.clone(),
-                                    ..DownloadMeta::from(&task)
-                                });
+                        let expected = task
+                            .expected_sha256
+                            .clone()
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| Some(task.checksum_value.clone()))
+                            .unwrap_or_default();
+                        let verification = self
+                            .final_path(&task)
+                            .ok_or_else(|| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::NotFound,
+                                    "final file not found",
+                                )
+                            })
+                            .and_then(|path| hash_file(&path, &task.checksum_algorithm));
+                        match verification {
+                            Ok(got)
+                                if !expected.is_empty() && got.eq_ignore_ascii_case(&expected) =>
+                            {
+                                let _ = self.db.set_meta(
+                                    id,
+                                    &DownloadMeta {
+                                        checksum_verified: true,
+                                        checksum_value: got,
+                                        checksum_algorithm: task.checksum_algorithm.clone(),
+                                        ..DownloadMeta::from(&task)
+                                    },
+                                );
+                            }
+                            Ok(got) => {
+                                let _ = self.db.set_meta(
+                                    id,
+                                    &DownloadMeta {
+                                        checksum_verified: false,
+                                        checksum_value: got.clone(),
+                                        checksum_algorithm: task.checksum_algorithm.clone(),
+                                        ..DownloadMeta::from(&task)
+                                    },
+                                );
+                                return self.finish_task(
+                                    id,
+                                    Err(TaskError::Download(
+                                        crate::download::DownloadError::ChecksumMismatch {
+                                            expected: if expected.is_empty() {
+                                                "<non-empty checksum>".into()
+                                            } else {
+                                                expected
+                                            },
+                                            got,
+                                        },
+                                    )),
+                                    started,
+                                );
+                            }
+                            Err(e) => {
+                                return self.finish_task(
+                                    id,
+                                    Err(TaskError::Download(crate::download::DownloadError::Io(e))),
+                                    started,
+                                );
                             }
                         }
                     }
                 }
+                // Single atomic write: downloaded + total + status +
+                // completed_at all flip together. No torn state on crash.
+                let _ = self.db.finish_complete(id, *n as i64, total);
                 (Status::Completed, None)
             }
-            Err(TaskError::Cancelled) => (
-                user_final.unwrap_or(Status::Paused),
-                None,
-            ),
-            Err(e) => (Status::Failed, Some(Self::error_string(&e))),
+            Err(TaskError::Cancelled) => (user_final.unwrap_or(Status::Paused), None),
+            Err(e) => (Status::Failed, Some(Self::error_string(e))),
         };
 
         // For non-Completed paths the status flip is its own atomic write.
         if status != Status::Completed {
+            // Reconcile the DB's `downloaded` counter with the bytes
+            // actually on disk (final file + any .part segment files).
+            // A transfer killed mid-body can leave the counter stale
+            // (below disk truth); resume must start from the real byte
+            // count, never from a lagging number.
+            if matches!(status, Status::Failed | Status::Paused | Status::Stopped) {
+                if let Some(task) = self.db.get(id).unwrap_or(None) {
+                    let disk_bytes = self.on_disk_bytes(&task);
+                    if disk_bytes > task.downloaded as u64 {
+                        let _ = self.db.update_progress(
+                            id,
+                            disk_bytes as i64,
+                            disk_bytes as i64,
+                            task.total_size,
+                            0.0,
+                        );
+                    }
+                }
+            }
             let _ = self.db.finish_terminal(id, status, err.as_deref());
         }
         // Phase 3B: clear the one-shot force_started flag whenever the
@@ -1341,27 +1544,80 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             }
         }
         if let Some(task) = self.db.get(id).unwrap_or(None) {
-            let _ = self.events.send(EngineEvent::Finished { task: task.clone() });
-            let _ = self.events.send(EngineEvent::StatusChanged { id, status, error: err.clone() });
+            let _ = self
+                .events
+                .send(EngineEvent::Finished { task: task.clone() });
+            let _ = self.events.send(EngineEvent::StatusChanged {
+                id,
+                status,
+                error: err.clone(),
+            });
 
             // Completion actions (only on success).
             if status == Status::Completed {
                 self.run_completion_actions(&task);
             }
             // Queue empty → run queue completion action.
-            if status == Status::Completed || status == Status::Failed || status == Status::Cancelled {
+            if status == Status::Completed
+                || status == Status::Failed
+                || status == Status::Cancelled
+            {
                 self.maybe_queue_completed(&task.queue);
             }
         }
 
-        // Attempt auto-retry for retryable failures.
+        // Attempt mirror failover first (bounded by the source list),
+        // then fall back to same-source auto-retry.
         if status == Status::Failed {
-            self.maybe_retry(id);
+            if !self.maybe_failover_mirror(id) {
+                self.maybe_retry(id);
+            }
         }
 
         // Free up a concurrency slot and promote next queued.
         self.govern_concurrency();
         let _ = started;
+    }
+
+    /// Mirror failover: on a retryable-class failure, rotate to the next
+    /// source and re-queue at the same retry budget. Returns true when a
+    /// failover was scheduled (caller must skip same-source retry).
+    ///
+    /// Guardrails:
+    /// - only retryable error classes (connection/timeout/5xx/unknown);
+    ///   a 404/403/checksum failure is authoritative, not a bad mirror.
+    /// - never rotates on user intent (paused/stopped/cancelled never
+    ///   reach here — `finish_task` gates on `Status::Failed` only).
+    /// - bounded: at most `sources().len() - 1` rotations per task, then
+    ///   falls through to normal retry/exhaustion.
+    fn maybe_failover_mirror(self: &Arc<Self>, id: i64) -> bool {
+        let task = match self.db.get(id).unwrap_or(None) {
+            Some(t) => t,
+            None => return false,
+        };
+        if !is_retryable(&task.error_category) {
+            return false;
+        }
+        let Some((next_idx, next_url)) = task.next_source() else {
+            return false;
+        };
+        let _ = self.db.set_mirror_index(id, next_idx);
+        let _ = self.db.inc_retry(id);
+        let _ = self.db.set_status(id, Status::Queued, None);
+        let _ = self.events.send(EngineEvent::StatusChanged {
+            id,
+            status: Status::Queued,
+            error: Some(format!("Primary source failed — trying mirror {next_url}…")),
+        });
+        let me = self.clone();
+        self.spawn_task(async move {
+            if let Some(t) = me.db.get(id).unwrap_or(None) {
+                if t.status == Status::Queued {
+                    me.start(t);
+                }
+            }
+        });
+        true
     }
 
     /// Decide whether to auto-retry a failed task, applying backoff.
@@ -1393,7 +1649,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         let _ = self.events.send(EngineEvent::StatusChanged {
             id,
             status: Status::Queued,
-            error: Some(format!("Retrying (attempt {} of {})…", task.retry_count + 1, max_retries)),
+            error: Some(format!(
+                "Retrying (attempt {} of {})…",
+                task.retry_count + 1,
+                max_retries
+            )),
         });
         let me = self.clone();
         self.spawn_task(async move {
@@ -1434,11 +1694,26 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             return;
         }
         match q.on_complete.as_str() {
-            "shutdown" => { let _ = std::process::Command::new("systemctl").args(["poweroff"]).spawn(); }
-            "suspend" => { let _ = std::process::Command::new("systemctl").args(["suspend"]).spawn(); }
-            "hibernate" => { let _ = std::process::Command::new("systemctl").args(["hibernate"]).spawn(); }
+            "shutdown" => {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["poweroff"])
+                    .spawn();
+            }
+            "suspend" => {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["suspend"])
+                    .spawn();
+            }
+            "hibernate" => {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["hibernate"])
+                    .spawn();
+            }
             "run" if !q.on_complete_command.is_empty() => {
-                let _ = std::process::Command::new("sh").arg("-c").arg(&q.on_complete_command).spawn();
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&q.on_complete_command)
+                    .spawn();
             }
             "notify" => {
                 let _ = self.events.send(EngineEvent::Notify {
@@ -1551,10 +1826,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         // an explicit opt-in via the `dangerous_actions` settings flag.
         // Without it, a misconfigured site rule or a stale task setting
         // could shut the user's machine down unexpectedly.
-        let is_destructive = matches!(
-            spec.action.as_str(),
-            "shutdown" | "suspend" | "hibernate"
-        );
+        let is_destructive = matches!(spec.action.as_str(), "shutdown" | "suspend" | "hibernate");
         if is_destructive && !self.settings().dangerous_actions.unwrap_or(false) {
             let _ = self.events.send(EngineEvent::Notify {
                 level: "warning".into(),
@@ -1580,7 +1852,9 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 }
             }
             "open_folder" => {
-                let _ = std::process::Command::new("xdg-open").arg(&task.save_dir).spawn();
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&task.save_dir)
+                    .spawn();
             }
             "notification" => {
                 // The frontend's notify channel is consumed by the UI
@@ -1609,7 +1883,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                     "dialog-information",
                 ] {
                     if std::process::Command::new("paplay")
-                        .arg(format!("/usr/share/sounds/freedesktop/stereo/{}.oga", sound))
+                        .arg(format!(
+                            "/usr/share/sounds/freedesktop/stereo/{}.oga",
+                            sound
+                        ))
                         .spawn()
                         .is_ok()
                     {
@@ -1618,7 +1895,9 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 }
             }
             "run_command" if !spec.command.is_empty() => {
-                let cmd = spec.command.replace("{file}", &self.final_path(task).unwrap_or_default());
+                let cmd = spec
+                    .command
+                    .replace("{file}", &self.final_path(task).unwrap_or_default());
                 let _ = std::process::Command::new("sh").arg("-c").arg(cmd).spawn();
             }
             "start_queue" if !spec.target_queue.is_empty() => {
@@ -1630,7 +1909,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             }
             "stop_queue" if !spec.target_queue.is_empty() => {
                 if let Some(q) = self.db.get_queue(&spec.target_queue).unwrap_or(None) {
-                    let q = DownloadQueue { enabled: false, ..q };
+                    let q = DownloadQueue {
+                        enabled: false,
+                        ..q
+                    };
                     let _ = self.db.upsert_queue(&q);
                     // Cancel any in-flight downloads belonging to this queue.
                     for t in self.list() {
@@ -1643,13 +1925,19 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 }
             }
             "shutdown" => {
-                let _ = std::process::Command::new("systemctl").args(["poweroff"]).spawn();
+                let _ = std::process::Command::new("systemctl")
+                    .args(["poweroff"])
+                    .spawn();
             }
             "suspend" => {
-                let _ = std::process::Command::new("systemctl").args(["suspend"]).spawn();
+                let _ = std::process::Command::new("systemctl")
+                    .args(["suspend"])
+                    .spawn();
             }
             "hibernate" => {
-                let _ = std::process::Command::new("systemctl").args(["hibernate"]).spawn();
+                let _ = std::process::Command::new("systemctl")
+                    .args(["hibernate"])
+                    .spawn();
             }
             _ => {}
         }
@@ -1693,7 +1981,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             return Ok(false);
         }
         std::fs::create_dir_all(destination_dir).map_err(|e| {
-            format!("cannot create category directory {}: {e}", destination_dir.display())
+            format!(
+                "cannot create category directory {}: {e}",
+                destination_dir.display()
+            )
         })?;
         let mut destination = destination_dir.join(&task.filename);
         if destination.exists() {
@@ -1716,7 +2007,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             }
         }
         std::fs::rename(&source, &destination).map_err(|e| {
-            format!("cannot route {} to {}: {e}", source.display(), destination.display())
+            format!(
+                "cannot route {} to {}: {e}",
+                source.display(),
+                destination.display()
+            )
         })?;
         self.db
             .set_save_dir(id, destination_dir.to_string_lossy().as_ref())
@@ -1742,15 +2037,44 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         }
     }
 
+    /// Bytes actually on disk for this task: the final file (single-stream
+    /// path) plus every `.part` segment file (chunked path). Used to
+    /// reconcile the DB `downloaded` counter when a transfer dies
+    /// mid-body, so resume/retry starts from the real position.
+    fn on_disk_bytes(&self, task: &DownloadTask) -> u64 {
+        let mut total = 0u64;
+        let final_file = Path::new(&task.save_dir).join(&task.filename);
+        if let Ok(m) = std::fs::metadata(&final_file) {
+            total += m.len();
+        }
+        let part_dir = self.state_dir.join(format!("parts-{}", task.id));
+        if let Ok(entries) = std::fs::read_dir(&part_dir) {
+            for e in entries.flatten() {
+                if let Ok(m) = e.metadata() {
+                    if m.is_file() {
+                        total += m.len();
+                    }
+                }
+            }
+        }
+        total
+    }
+
     pub fn pause(self: &Arc<Self>, id: i64) -> Result<(), String> {
-        let task = self.db.get(id).map_err(|e| e.to_string())?.ok_or("task not found")?;
+        let task = self
+            .db
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("task not found")?;
         match task.status {
             // Queued / Scheduled → mark paused without ever starting.
             Status::Queued | Status::Scheduled => {
                 let _ = self.db.set_status(id, Status::Paused, None);
-                let _ = self
-                    .events
-                    .send(EngineEvent::StatusChanged { id, status: Status::Paused, error: None });
+                let _ = self.events.send(EngineEvent::StatusChanged {
+                    id,
+                    status: Status::Paused,
+                    error: None,
+                });
                 return Ok(());
             }
             // Stopped / Failed → no active download to interrupt; keep state.
@@ -1759,9 +2083,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             Status::Cancelled => {
                 // Cancel race already finished; revive to paused.
                 let _ = self.db.set_status(id, Status::Paused, None);
-                let _ = self
-                    .events
-                    .send(EngineEvent::StatusChanged { id, status: Status::Paused, error: None });
+                let _ = self.events.send(EngineEvent::StatusChanged {
+                    id,
+                    status: Status::Paused,
+                    error: None,
+                });
                 return Ok(());
             }
         }
@@ -1774,13 +2100,21 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         // downloaded=0 even though partials exist.
         let _ = self.recheck(id);
         let _ = self.db.set_status(id, Status::Paused, None);
-        let _ = self.events.send(EngineEvent::StatusChanged { id, status: Status::Paused, error: None });
+        let _ = self.events.send(EngineEvent::StatusChanged {
+            id,
+            status: Status::Paused,
+            error: None,
+        });
         self.govern_concurrency();
         Ok(())
     }
 
     pub fn resume(self: &Arc<Self>, id: i64) -> Result<(), String> {
-        let task = self.db.get(id).map_err(|e| e.to_string())?.ok_or("task not found")?;
+        let task = self
+            .db
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("task not found")?;
         if !task.status.is_resumable() {
             return Err(format!(
                 "only paused, stopped, or failed tasks can be resumed (current: {})",
@@ -1789,10 +2123,13 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         }
         // Reset error category on manual resume from failure.
         if task.status == Status::Failed {
-            let _ = self.db.set_meta(id, &DownloadMeta {
-                error_category: String::new(),
-                ..DownloadMeta::from(&task)
-            });
+            let _ = self.db.set_meta(
+                id,
+                &DownloadMeta {
+                    error_category: String::new(),
+                    ..DownloadMeta::from(&task)
+                },
+            );
         }
         // Stamp the resume time so the UI can show "last resumed" without
         // polling the DB on every render.
@@ -1802,20 +2139,28 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     }
 
     pub fn cancel(self: &Arc<Self>, id: i64) -> Result<(), String> {
-        let task = self.db.get(id).map_err(|e| e.to_string())?.ok_or("task not found")?;
+        let task = self
+            .db
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("task not found")?;
         match task.status {
             // Not yet started → mark stopped, no download to interrupt.
             Status::Queued | Status::Scheduled => {
                 let _ = self.db.set_status(id, Status::Stopped, None);
-                let _ = self
-                    .events
-                    .send(EngineEvent::StatusChanged { id, status: Status::Stopped, error: None });
+                let _ = self.events.send(EngineEvent::StatusChanged {
+                    id,
+                    status: Status::Stopped,
+                    error: None,
+                });
                 return Ok(());
             }
             // Already in a terminal / paused state — no-op.
-            Status::Stopped | Status::Failed | Status::Paused | Status::Completed | Status::Cancelled => {
-                return Ok(())
-            }
+            Status::Stopped
+            | Status::Failed
+            | Status::Paused
+            | Status::Completed
+            | Status::Cancelled => return Ok(()),
             Status::Downloading => {}
         }
         // Sync the DB's downloaded counter with whatever the downloader has
@@ -1827,7 +2172,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             cancel.store(true, Ordering::Relaxed);
         }
         let _ = self.db.set_status(id, Status::Stopped, None);
-        let _ = self.events.send(EngineEvent::StatusChanged { id, status: Status::Stopped, error: None });
+        let _ = self.events.send(EngineEvent::StatusChanged {
+            id,
+            status: Status::Stopped,
+            error: None,
+        });
         self.govern_concurrency();
         Ok(())
     }
@@ -1837,7 +2186,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     /// for single-stream downloads the file lives at the final path. Sum
     /// both so the resumed size is the true on-disk total.
     pub fn recheck(self: &Arc<Self>, id: i64) -> Result<(), String> {
-        let task = self.db.get(id).map_err(|e| e.to_string())?.ok_or("task not found")?;
+        let task = self
+            .db
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("task not found")?;
         let path = Path::new(&task.save_dir).join(&task.filename);
         let final_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let mut parts_size: u64 = 0;
@@ -1853,10 +2206,18 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         }
         let existing = final_size.max(parts_size);
         if existing > 0 {
-            let total = if task.total_size > 0 { task.total_size } else { existing as i64 };
-            let _ = self.db.update_progress(id, existing as i64, existing as i64, total, 0.0);
+            let total = if task.total_size > 0 {
+                task.total_size
+            } else {
+                existing as i64
+            };
+            let _ = self
+                .db
+                .update_progress(id, existing as i64, existing as i64, total, 0.0);
         }
-        let _ = self.events.send(EngineEvent::Finished { task: self.db.get(id).unwrap_or(None).unwrap_or(task) });
+        let _ = self.events.send(EngineEvent::Finished {
+            task: self.db.get(id).unwrap_or(None).unwrap_or(task),
+        });
         Ok(())
     }
 
@@ -1893,15 +2254,27 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
 
     /// Delete the downloaded file on disk for a completed task.
     pub fn delete_file(self: &Arc<Self>, id: i64) -> Result<(), String> {
-        let task = self.db.get(id).map_err(|e| e.to_string())?.ok_or("task not found")?;
+        let task = self
+            .db
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("task not found")?;
         let path = Path::new(&task.save_dir).join(&task.filename);
         std::fs::remove_file(&path).map_err(|e| format!("cannot delete file: {e}"))?;
-        let _ = self.events.send(EngineEvent::Notify { level: "info".into(), title: "File deleted".into(), body: task.filename });
+        let _ = self.events.send(EngineEvent::Notify {
+            level: "info".into(),
+            title: "File deleted".into(),
+            body: task.filename,
+        });
         Ok(())
     }
 
     pub fn redownload(self: &Arc<Self>, id: i64) -> Result<(), String> {
-        let task = self.db.get(id).map_err(|e| e.to_string())?.ok_or("task not found")?;
+        let task = self
+            .db
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("task not found")?;
         // Remove partial + final file then re-add fresh.
         let part_dir = self.state_dir.join(format!("parts-{id}"));
         let _ = std::fs::remove_dir_all(&part_dir);
@@ -1909,7 +2282,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         let _ = std::fs::remove_file(&path);
         let _ = self.db.set_status(id, Status::Queued, None);
         let _ = self.db.update_progress(id, 0, 0, task.total_size, 0.0);
-        let _ = self.events.send(EngineEvent::StatusChanged { id, status: Status::Queued, error: None });
+        let _ = self.events.send(EngineEvent::StatusChanged {
+            id,
+            status: Status::Queued,
+            error: None,
+        });
         self.start(task);
         Ok(())
     }
@@ -1925,7 +2302,9 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     /// Normal=0 / Low=-10 however it likes). Persisted via
     /// `Db::set_priority` so the change survives restarts.
     pub fn set_download_priority(self: &Arc<Self>, id: i64, priority: i32) -> Result<(), String> {
-        self.db.set_priority(id, priority).map_err(|e| e.to_string())?;
+        self.db
+            .set_priority(id, priority)
+            .map_err(|e| e.to_string())?;
         // Re-promote in case the new priority bumps the task into a
         // free concurrency slot.
         self.govern_concurrency();
@@ -1933,7 +2312,9 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     }
 
     pub fn set_category(self: &Arc<Self>, id: i64, category: &str) -> Result<(), String> {
-        self.db.set_category(id, category).map_err(|e| e.to_string())?;
+        self.db
+            .set_category(id, category)
+            .map_err(|e| e.to_string())?;
         // Apply category save dir if configured.
         if let Some(cat) = self.category(category) {
             if !cat.save_dir.is_empty() {
@@ -1944,7 +2325,9 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     }
 
     pub fn rename(self: &Arc<Self>, id: i64, filename: &str) -> Result<(), String> {
-        self.db.set_filename(id, filename).map_err(|e| e.to_string())?;
+        self.db
+            .set_filename(id, filename)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1955,11 +2338,15 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
 
     pub fn set_proxy_url(self: &Arc<Self>, id: i64, proxy_url: Option<&str>) -> Result<(), String> {
         validate_task_proxy(proxy_url)?;
-        self.db.set_proxy_url(id, proxy_url).map_err(|e| e.to_string())
+        self.db
+            .set_proxy_url(id, proxy_url)
+            .map_err(|e| e.to_string())
     }
 
     pub fn set_description(self: &Arc<Self>, id: i64, desc: &str) -> Result<(), String> {
-        self.db.set_description(id, desc).map_err(|e| e.to_string())?;
+        self.db
+            .set_description(id, desc)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1987,7 +2374,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     /// Returns an error if the file is missing or unreadable; the DB
     /// is left untouched in that case (a verification failure should
     /// not poison the task record).
-    pub fn verify_checksum(self: &Arc<Self>, id: i64) -> Result<crate::models::ChecksumResult, String> {
+    pub fn verify_checksum(
+        self: &Arc<Self>,
+        id: i64,
+    ) -> Result<crate::models::ChecksumResult, String> {
         use sha2::{Digest, Sha256};
         use std::io::Read;
 
@@ -1998,8 +2388,8 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             .ok_or("task not found")?;
 
         let path = std::path::Path::new(&task.save_dir).join(&task.filename);
-        let meta = std::fs::metadata(&path)
-            .map_err(|e| format!("cannot stat {}: {e}", path.display()))?;
+        let meta =
+            std::fs::metadata(&path).map_err(|e| format!("cannot stat {}: {e}", path.display()))?;
         if !meta.is_file() {
             return Err(format!("not a regular file: {}", path.display()));
         }
@@ -2174,10 +2564,18 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         let b = queues[new_pos].priority;
         queues[pos].priority = b;
         queues[new_pos].priority = a;
-        self.db.upsert_queue(&queues[pos]).map_err(|e| e.to_string())?;
-        self.db.upsert_queue(&queues[new_pos]).map_err(|e| e.to_string())?;
-        let _ = self.events.send(EngineEvent::QueueChanged { queue: queues[pos].clone() });
-        let _ = self.events.send(EngineEvent::QueueChanged { queue: queues[new_pos].clone() });
+        self.db
+            .upsert_queue(&queues[pos])
+            .map_err(|e| e.to_string())?;
+        self.db
+            .upsert_queue(&queues[new_pos])
+            .map_err(|e| e.to_string())?;
+        let _ = self.events.send(EngineEvent::QueueChanged {
+            queue: queues[pos].clone(),
+        });
+        let _ = self.events.send(EngineEvent::QueueChanged {
+            queue: queues[new_pos].clone(),
+        });
         self.govern_concurrency();
         Ok(())
     }
@@ -2197,7 +2595,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             "top" => {
                 // Promote the named queue by swapping priorities
                 // with the queue above it until it is at index 0.
-                while self.db.list_queues().unwrap_or_default()
+                while self
+                    .db
+                    .list_queues()
+                    .unwrap_or_default()
                     .iter()
                     .position(|q| q.name == name)
                     .unwrap_or(0)
@@ -2207,7 +2608,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 }
             }
             "bottom" => {
-                while self.db.list_queues().unwrap_or_default()
+                while self
+                    .db
+                    .list_queues()
+                    .unwrap_or_default()
                     .iter()
                     .position(|q| q.name == name)
                     .unwrap_or(0)
@@ -2319,7 +2723,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             }
             if matches!(
                 t.status,
-                Status::Paused | Status::Stopped | Status::Failed | Status::Queued | Status::Scheduled
+                Status::Paused
+                    | Status::Stopped
+                    | Status::Failed
+                    | Status::Queued
+                    | Status::Scheduled
             ) {
                 self.start(t);
                 started += 1;
@@ -2352,10 +2760,9 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
             if matches!(
                 t.status,
                 Status::Downloading | Status::Paused | Status::Queued | Status::Scheduled
-            ) {
-                if self.cancel(t.id).is_ok() {
-                    stopped += 1;
-                }
+            ) && self.cancel(t.id).is_ok()
+            {
+                stopped += 1;
             }
         }
         Ok(stopped)
@@ -2373,6 +2780,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         user_agent: Option<&str>,
     ) -> Result<crate::models::ProbeInfo, String> {
         use crate::download::DownloadError;
+        // FTP has no HEAD: use SIZE + the URL's filename instead.
+        if url.trim_start().to_ascii_lowercase().starts_with("ftp://") {
+            return crate::ftp::probe_ftp(url, None).await;
+        }
         let mut task = DownloadTask::default_for_probe(url, "");
         if let Some(c) = cookies {
             task.cookies = Some(c.to_string());
@@ -2417,7 +2828,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         Ok(tasks.len())
     }
 
-    pub async fn import_downloads(self: &Arc<Self>, path: &str, start: bool) -> Result<usize, String> {
+    pub async fn import_downloads(
+        self: &Arc<Self>,
+        path: &str,
+        start: bool,
+    ) -> Result<usize, String> {
         let data = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let tasks: Vec<DownloadTask> = serde_json::from_str(&data).map_err(|e| e.to_string())?;
         let mut count = 0;
@@ -2447,6 +2862,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 priority: Some(t.priority),
                 browser_dedup_id: String::new(),
                 skip_probe: false,
+                mirrors: t.mirrors,
             };
             if let Ok(id) = self.add(nd).await {
                 if start {
@@ -2463,7 +2879,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     pub fn clear_finished(self: &Arc<Self>) -> Result<usize, String> {
         let mut count = 0;
         for t in self.list() {
-            if matches!(t.status, Status::Completed | Status::Cancelled | Status::Stopped) {
+            if matches!(
+                t.status,
+                Status::Completed | Status::Cancelled | Status::Stopped
+            ) {
                 let _ = self.remove_keep_file(t.id);
                 count += 1;
             }
@@ -2496,14 +2915,16 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 }
             }
             "proxy_url" => {
-                self.downloader.set_proxy(if value.is_empty() { None } else { Some(value) });
+                self.downloader
+                    .set_proxy(if value.is_empty() { None } else { Some(value) });
             }
             _ => {}
         }
     }
 
     pub fn set_queue_speed(self: &Arc<Self>, queue: &str, kbps: u64) {
-        self.downloader.set_queue_speed(queue.to_string(), kbps * 1024);
+        self.downloader
+            .set_queue_speed(queue.to_string(), kbps * 1024);
     }
 
     // -------------------------------------------------------------------
@@ -2559,10 +2980,7 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         // Phase 3C: the regex captures the attribute NAME as group 1
         // (href | src) and the URL as group 2. The source column in
         // the grabber UI shows where each link came from.
-        let attr_re = regex::Regex::new(
-            r#"(?i)(href|src)\s*=\s*["']([^"']+)["']"#,
-        )
-        .unwrap();
+        let attr_re = regex::Regex::new(r#"(?i)(href|src)\s*=\s*["']([^"']+)["']"#).unwrap();
         let ext_re = regex::Regex::new(
             r"(?i)\.(zip|rar|7z|tar|gz|bz2|xz|iso|img|exe|msi|apk|deb|rpm|appimage|dmg|sh|run|mp3|flac|wav|m4a|ogg|opus|mp4|mkv|webm|avi|mov|wmv|flv|m4v|ts|mpg|pdf|epub|djvu|docx?|xlsx?|pptx?|csv|sql|db|torrent)(\?|$)",
         )
@@ -2573,7 +2991,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
         for cap in attr_re.captures_iter(&html) {
             let source = cap[1].to_ascii_lowercase();
             let raw = cap[2].trim();
-            if raw.is_empty() || raw.starts_with('#') || raw.starts_with("mailto:") || raw.starts_with("javascript:") {
+            if raw.is_empty()
+                || raw.starts_with('#')
+                || raw.starts_with("mailto:")
+                || raw.starts_with("javascript:")
+            {
                 continue;
             }
             if !ext_re.is_match(raw) {
@@ -2591,7 +3013,11 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
                 .next()
                 .unwrap_or("file")
                 .to_string();
-            let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+            let ext = filename
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
             let category = category_for_ext(&ext);
             // Apply rules.
             let matched = match grabber_filter(&absolute, &ext, rules) {
@@ -2623,8 +3049,13 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
     /// Backward-compat wrapper. Returns links filtered by the sensible
     /// default rules so the simple callers (e.g. the existing Tauri
     /// command) get the same UX as before.
-    pub async fn grab_site(self: &Arc<Self>, url: &str, limit: usize) -> Result<Vec<GrabbedLink>, String> {
-        self.grab_site_with_rules(url, limit, &crate::models::GrabRules::sensible_defaults()).await
+    pub async fn grab_site(
+        self: &Arc<Self>,
+        url: &str,
+        limit: usize,
+    ) -> Result<Vec<GrabbedLink>, String> {
+        self.grab_site_with_rules(url, limit, &crate::models::GrabRules::sensible_defaults())
+            .await
     }
 }
 
@@ -2636,10 +3067,10 @@ pub fn schedule_sort_key(t: &DownloadTask, queues: &[DownloadQueue]) -> (u8, i32
 /// Returns empty string on parse failure (so callers can decide whether
 /// to allow the empty host through).
 fn host_of(url: &str) -> String {
-    let after = url.splitn(2, "://").nth(1).unwrap_or(url);
-    let host_port = after.splitn(2, '/').next().unwrap_or(after);
-    let host_port = host_port.splitn(2, '?').next().unwrap_or(host_port);
-    let host_port = host_port.splitn(2, '#').next().unwrap_or(host_port);
+    let after = url.split_once("://").map(|x| x.1).unwrap_or(url);
+    let host_port = after.split('/').next().unwrap_or(after);
+    let host_port = host_port.split('?').next().unwrap_or(host_port);
+    let host_port = host_port.split('#').next().unwrap_or(host_port);
     let host = host_port.split(':').next().unwrap_or(host_port);
     host.trim().to_ascii_lowercase()
 }
@@ -2666,8 +3097,12 @@ pub fn host_matches_pattern(host: &str, pattern: &str) -> bool {
         return false;
     }
     // Reject illegal host characters in BOTH host and pattern.
-    if !h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-        || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '*')
+    if !h
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        || !p
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '*')
     {
         return false;
     }
@@ -2682,7 +3117,16 @@ pub fn host_matches_pattern(host: &str, pattern: &str) -> bool {
 }
 
 fn is_retryable(cat: &str) -> bool {
-    matches!(cat, "dns" | "connection" | "timeout" | "tls" | "429" | "5xx" | "unknown")
+    // NOTE: generic "tls" is deliberately NOT retryable — a TLS
+    // protocol/configuration failure (unsupported version, bad SNI) fails
+    // identically on every attempt. Certificate validation failures get
+    // their own "cert" category (also non-retryable). Abrupt transport
+    // terminations — unexpected EOF, missing TLS close_notify, resets —
+    // classify as "connection", which IS retryable.
+    matches!(
+        cat,
+        "dns" | "connection" | "timeout" | "429" | "5xx" | "unknown"
+    )
 }
 
 // The real free-bytes detector lives in `crate::disk_free` and uses
@@ -2715,15 +3159,30 @@ fn hash_file(path: &str, _alg: &str) -> Result<String, std::io::Error> {
 /// and the backend's `category_for_ext` in lockstep.
 fn category_for_ext(ext: &str) -> String {
     let e = ext.to_ascii_lowercase();
-    if matches!(e.as_str(), "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "zst" | "iso") {
+    if matches!(
+        e.as_str(),
+        "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "zst" | "iso"
+    ) {
         "compressed".into()
-    } else if matches!(e.as_str(), "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" | "flv" | "m4v" | "ts" | "mpg") {
+    } else if matches!(
+        e.as_str(),
+        "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" | "flv" | "m4v" | "ts" | "mpg"
+    ) {
         "video".into()
-    } else if matches!(e.as_str(), "mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac" | "opus") {
+    } else if matches!(
+        e.as_str(),
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac" | "opus"
+    ) {
         "music".into()
-    } else if matches!(e.as_str(), "pdf" | "epub" | "doc" | "docx" | "txt" | "md" | "djvu") {
+    } else if matches!(
+        e.as_str(),
+        "pdf" | "epub" | "doc" | "docx" | "txt" | "md" | "djvu"
+    ) {
         "documents".into()
-    } else if matches!(e.as_str(), "exe" | "msi" | "deb" | "rpm" | "appimage" | "apk" | "dmg" | "run" | "sh") {
+    } else if matches!(
+        e.as_str(),
+        "exe" | "msi" | "deb" | "rpm" | "appimage" | "apk" | "dmg" | "run" | "sh"
+    ) {
         "programs".into()
     } else {
         "other".into()
@@ -2734,10 +3193,18 @@ fn category_for_ext(ext: &str) -> String {
 /// `Ok(matched_reason)` if the link should be kept, `Err(drop_reason)`
 /// otherwise. Both `Ok` and `Err` carry a short string the UI can
 /// display in a tooltip.
-fn grabber_filter(url: &str, ext: &str, rules: &crate::models::GrabRules) -> Result<String, String> {
+fn grabber_filter(
+    url: &str,
+    ext: &str,
+    rules: &crate::models::GrabRules,
+) -> Result<String, String> {
     let ext_lower = ext.to_ascii_lowercase();
     // 1. exclude_extensions always wins.
-    if rules.exclude_extensions.iter().any(|e| e.eq_ignore_ascii_case(&ext_lower)) {
+    if rules
+        .exclude_extensions
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(&ext_lower))
+    {
         return Err(format!("excluded:ext:{ext_lower}"));
     }
     // 2. exclude_domains (hostname-aware, same policy as Site Rules).
@@ -2752,7 +3219,10 @@ fn grabber_filter(url: &str, ext: &str, rules: &crate::models::GrabRules) -> Res
     }
     // 3. include_extensions (when non-empty, it's an allow-list).
     if !rules.include_extensions.is_empty()
-        && !rules.include_extensions.iter().any(|e| e.eq_ignore_ascii_case(&ext_lower))
+        && !rules
+            .include_extensions
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(&ext_lower))
     {
         return Err(format!("excluded:not-in-include-ext:{ext_lower}"));
     }
@@ -2763,7 +3233,11 @@ fn grabber_filter(url: &str, ext: &str, rules: &crate::models::GrabRules) -> Res
         // pass. The filter is reported as a "pending" match here.
     }
     // The link is kept. The reason is informational.
-    let reason = if rules.include_extensions.iter().any(|e| e.eq_ignore_ascii_case(&ext_lower)) {
+    let reason = if rules
+        .include_extensions
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(&ext_lower))
+    {
         "include:ext"
     } else {
         "default"
@@ -2830,7 +3304,10 @@ fn expand_numbered_range(s: &str) -> Option<Vec<String>> {
     let (head, rest) = s.split_at(dots);
     // rest is "..MMMMsuffix" — find the trailing non-digit run.
     let after_dots = &rest[2..];
-    let end_digits: String = after_dots.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let end_digits: String = after_dots
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     if end_digits.is_empty() {
         return None;
     }
@@ -2864,6 +3341,39 @@ fn expand_numbered_range(s: &str) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// Resolve a possibly-relative URL against the page URL.
+fn resolve_url(base: &str, raw: &str) -> String {
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        return raw.to_string();
+    }
+    if raw.starts_with("//") {
+        let scheme = if base.starts_with("https") {
+            "https:"
+        } else {
+            "http:"
+        };
+        return format!("{scheme}{raw}");
+    }
+    let base_trim = base.split(['?', '#']).next().unwrap_or(base);
+    if raw.starts_with('/') {
+        // "/foo" → "scheme://host" + "/foo"
+        // `base_trim` is "scheme://host[:port]/path...". Find the
+        // first '/' AFTER the "://" so the path doesn't get eaten.
+        if let Some(scheme_end) = base_trim.find("://") {
+            let after_scheme = &base_trim[scheme_end + 3..];
+            if let Some(path_start) = after_scheme.find('/') {
+                let scheme_host = &base_trim[..scheme_end + 3 + path_start];
+                return format!("{scheme_host}{raw}");
+            }
+        }
+        // No path component — emit raw as-is.
+        return raw.to_string();
+    }
+    // Relative "foo" → base_dir/foo
+    let base_dir = base_trim.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+    format!("{base_dir}/{raw}")
+}
+
 #[cfg(test)]
 mod batch_parse_tests {
     use super::*;
@@ -2873,18 +3383,20 @@ mod batch_parse_tests {
         let urls = parse_batch_urls(
             "https://example.com/a.zip\nhttps://example.com/b.zip\n\n# comment\nhttps://example.com/c.zip",
         );
-        assert_eq!(urls, vec![
-            "https://example.com/a.zip",
-            "https://example.com/b.zip",
-            "https://example.com/c.zip",
-        ]);
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/a.zip",
+                "https://example.com/b.zip",
+                "https://example.com/c.zip",
+            ]
+        );
     }
 
     #[test]
     fn task_proxy_validator_rejects_malformed_and_embedded_credentials() {
         assert!(validate_task_proxy(Some("not a proxy")).is_err());
-        let err = validate_task_proxy(Some("http://alice:secret@127.0.0.1:8080"))
-            .unwrap_err();
+        let err = validate_task_proxy(Some("http://alice:secret@127.0.0.1:8080")).unwrap_err();
         assert!(err.contains("secure credential reference"));
         assert!(validate_task_proxy(Some("")).is_ok());
         assert!(validate_task_proxy(None).is_ok());
@@ -2919,21 +3431,27 @@ mod batch_parse_tests {
     #[test]
     fn expands_numbered_range() {
         let urls = parse_batch_urls("https://example.com/file-001..003.zip");
-        assert_eq!(urls, vec![
-            "https://example.com/file-001.zip",
-            "https://example.com/file-002.zip",
-            "https://example.com/file-003.zip",
-        ]);
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/file-001.zip",
+                "https://example.com/file-002.zip",
+                "https://example.com/file-003.zip",
+            ]
+        );
     }
 
     #[test]
     fn expands_unpadded_range() {
         let urls = parse_batch_urls("https://example.com/file-1..3.zip");
-        assert_eq!(urls, vec![
-            "https://example.com/file-1.zip",
-            "https://example.com/file-2.zip",
-            "https://example.com/file-3.zip",
-        ]);
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/file-1.zip",
+                "https://example.com/file-2.zip",
+                "https://example.com/file-3.zip",
+            ]
+        );
     }
 
     #[test]
@@ -2950,38 +3468,87 @@ mod batch_parse_tests {
     #[test]
     fn preserves_punctuation_outside_the_range() {
         let urls = parse_batch_urls("https://example.com/abc-1..2-xyz.zip");
-        assert_eq!(urls, vec![
-            "https://example.com/abc-1-xyz.zip",
-            "https://example.com/abc-2-xyz.zip",
-        ]);
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/abc-1-xyz.zip",
+                "https://example.com/abc-2-xyz.zip",
+            ]
+        );
     }
 }
 
-/// Resolve a possibly-relative URL against the page URL.
-fn resolve_url(base: &str, raw: &str) -> String {
-    if raw.starts_with("http://") || raw.starts_with("https://") {
-        return raw.to_string();
+#[cfg(test)]
+mod retry_classification_tests {
+    use super::*;
+
+    /// The docs.rs failure mode: an otherwise valid TLS transfer ends with
+    /// the peer closing the connection without sending `close_notify`.
+    /// reqwest surfaces this as a body-decode error whose source chain
+    /// contains "peer closed connection without sending TLS close_notify".
+    /// `error_string()` walks that chain, so `error_to_category` must see
+    /// "tls" — but this is a TRUNCATED TRANSFER, not a certificate problem,
+    /// so it must classify as retryable connection noise, not a TLS config
+    /// failure. Regression for the v1.0 field report.
+    #[test]
+    fn tls_close_notify_eof_is_connection_category() {
+        let msg = "error decoding response body: error reading a body from connection: peer closed connection without sending TLS close_notify";
+        assert_eq!(crate::db::classify_error_category(msg), "connection");
+        assert!(is_retryable(&crate::db::classify_error_category(msg)));
     }
-    if raw.starts_with("//") {
-        let scheme = if base.starts_with("https") { "https:" } else { "http:" };
-        return format!("{scheme}{raw}");
+
+    /// Plain-HTTP equivalent seen in clean-install CI: hyper aborts the
+    /// keep-alive body mid-stream ("end of file before message length
+    /// reached"). No TLS involved, so it must not classify as "tls".
+    #[test]
+    fn truncated_body_eof_is_connection_category() {
+        let msg = "error decoding response body: error reading a body from connection: end of file before message length reached";
+        assert_eq!(crate::db::classify_error_category(msg), "connection");
+        assert!(is_retryable(&crate::db::classify_error_category(msg)));
     }
-    let base_trim = base.split(['?', '#']).next().unwrap_or(base);
-    if raw.starts_with('/') {
-        // "/foo" → "scheme://host" + "/foo"
-        // `base_trim` is "scheme://host[:port]/path...". Find the
-        // first '/' AFTER the "://" so the path doesn't get eaten.
-        if let Some(scheme_end) = base_trim.find("://") {
-            let after_scheme = &base_trim[scheme_end + 3..];
-            if let Some(path_start) = after_scheme.find('/') {
-                let scheme_host = &base_trim[..scheme_end + 3 + path_start];
-                return format!("{scheme_host}{raw}");
-            }
+
+    /// Genuine TLS failures must NOT be retried: a bad certificate or
+    /// hostname mismatch is deterministic and will fail identically on
+    /// every attempt. They classify as the dedicated non-retryable
+    /// "cert" category (v1.1 abrupt-TLS-EOF spec, req 2).
+    #[test]
+    fn certificate_failures_classify_cert_and_are_not_retryable() {
+        let cert_errors = [
+            "error sending request: certificate verify failed",
+            "invalid peer certificate: UnknownIssuer",
+            "invalid peer certificate: NotValidForName",
+            "invalid peer certificate: Expired",
+        ];
+        for msg in cert_errors {
+            let cat = crate::db::classify_error_category(msg);
+            assert_eq!(cat, "cert", "expected cert category for: {msg}");
+            assert!(
+                !is_retryable(&cat),
+                "cert failure must not be retryable: {msg}"
+            );
         }
-        // No path component — emit raw as-is.
-        return raw.to_string();
     }
-    // Relative "foo" → base_dir/foo
-    let base_dir = base_trim.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
-    format!("{base_dir}/{raw}")
+
+    /// A TLS protocol/configuration failure (not a cert problem, not an
+    /// abrupt close) classifies "tls" and is not retried — retrying a
+    /// deterministic TLS misconfiguration just burns the budget.
+    #[test]
+    fn generic_tls_config_errors_are_not_retryable() {
+        // "tls error: …" is the Display of DownloadError::TlsError — the
+        // string the classifier actually sees for a TLS handshake failure.
+        let cat =
+            crate::db::classify_error_category("tls error: received fatal alert: HandshakeFailure");
+        assert_eq!(cat, "tls");
+        assert!(!is_retryable(&cat));
+    }
+
+    /// Real retry gates: retryable categories retry when budget remains,
+    /// and never retry when the task's budget is exhausted.
+    #[test]
+    fn retry_budget_respected() {
+        assert!(is_retryable("connection"));
+        assert!(!is_retryable("permission"));
+        assert!(!is_retryable("disk_full"));
+        assert!(!is_retryable("checksum"));
+    }
 }

@@ -9,8 +9,6 @@
 // the public surface — `set`/`get`/`is_configured`/`clear` — works
 // correctly regardless of which backend is active.
 
-use std::sync::Arc;
-
 use downpilot_core::credentials::CredentialStore;
 use tempfile::TempDir;
 

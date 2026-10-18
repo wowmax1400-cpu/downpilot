@@ -41,6 +41,7 @@ fn nd(url: &str, dedup: &str) -> NewDownload {
         start_immediately: false,
         browser_dedup_id: dedup.to_string(),
         skip_probe: false,
+        mirrors: Vec::new(),
     }
 }
 
@@ -48,7 +49,9 @@ fn nd(url: &str, dedup: &str) -> NewDownload {
 fn first_insert_with_dedup_id_succeeds_and_is_findable() {
     let tmp = tempdir().unwrap();
     let db = Db::open(&tmp.path().join("test.db")).unwrap();
-    let id = db.insert(&nd("https://example.com/a.zip", "ext-1"), "/tmp").unwrap();
+    let id = db
+        .insert(&nd("https://example.com/a.zip", "ext-1"), "/tmp")
+        .unwrap();
     let found = db.find_by_browser_dedup("ext-1").unwrap();
     assert_eq!(found, Some(id));
 }
@@ -60,9 +63,13 @@ fn sql_layer_rejects_duplicate_dedup_id() {
     // browser download.
     let tmp = tempdir().unwrap();
     let db = Db::open(&tmp.path().join("test.db")).unwrap();
-    db.insert(&nd("https://example.com/a.zip", "ext-A"), "/tmp").unwrap();
+    db.insert(&nd("https://example.com/a.zip", "ext-A"), "/tmp")
+        .unwrap();
     let second = db.insert(&nd("https://example.com/a.zip", "ext-A"), "/tmp");
-    assert!(second.is_err(), "UNIQUE index must reject the second insert");
+    assert!(
+        second.is_err(),
+        "UNIQUE index must reject the second insert"
+    );
 }
 
 #[test]
@@ -72,8 +79,12 @@ fn empty_dedup_id_always_inserts() {
     // same URL.
     let tmp = tempdir().unwrap();
     let db = Db::open(&tmp.path().join("test.db")).unwrap();
-    let a = db.insert(&nd("https://example.com/a.zip", ""), "/tmp").unwrap();
-    let b = db.insert(&nd("https://example.com/a.zip", ""), "/tmp").unwrap();
+    let a = db
+        .insert(&nd("https://example.com/a.zip", ""), "/tmp")
+        .unwrap();
+    let b = db
+        .insert(&nd("https://example.com/a.zip", ""), "/tmp")
+        .unwrap();
     assert_ne!(a, b);
 }
 
@@ -81,8 +92,12 @@ fn empty_dedup_id_always_inserts() {
 fn different_dedup_ids_create_independent_rows() {
     let tmp = tempdir().unwrap();
     let db = Db::open(&tmp.path().join("test.db")).unwrap();
-    let a = db.insert(&nd("https://example.com/a.zip", "ext-A"), "/tmp").unwrap();
-    let b = db.insert(&nd("https://example.com/a.zip", "ext-B"), "/tmp").unwrap();
+    let a = db
+        .insert(&nd("https://example.com/a.zip", "ext-A"), "/tmp")
+        .unwrap();
+    let b = db
+        .insert(&nd("https://example.com/a.zip", "ext-B"), "/tmp")
+        .unwrap();
     assert_ne!(a, b);
     assert_eq!(db.find_by_browser_dedup("ext-A").unwrap(), Some(a));
     assert_eq!(db.find_by_browser_dedup("ext-B").unwrap(), Some(b));

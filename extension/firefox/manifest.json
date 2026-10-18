@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "DownPilot Downloader (Firefox)",
+  "version": "1.0.0",
+  "description": "Grab videos and files with DownPilot: inline quality picker, context menu, and download interception. Firefox MV3 build.",
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "downpilot@local",
+      "strict_min_version": "115.0"
+    }
+  },
+
+  "permissions": [
+    "nativeMessaging",
+    "downloads",
+    "downloads.open",
+    "storage",
+    "activeTab",
+    "contextMenus"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "DownPilot",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

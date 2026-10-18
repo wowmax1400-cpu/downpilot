@@ -24,8 +24,7 @@ use tokio::net::TcpListener;
 async fn start_auth_server() -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let expected =
-        base64::engine::general_purpose::STANDARD.encode(b"alice:s3cret");
+    let expected = base64::engine::general_purpose::STANDARD.encode(b"alice:s3cret");
     let handle = tokio::spawn(async move {
         loop {
             let (mut sock, _) = match listener.accept().await {
@@ -50,7 +49,9 @@ async fn start_auth_server() -> (String, tokio::task::JoinHandle<()>) {
                         return false;
                     }
                     // Find the ':' in the *original* line to preserve value case.
-                    let Some(idx) = l.find(':') else { return false; };
+                    let Some(idx) = l.find(':') else {
+                        return false;
+                    };
                     let value = l[idx + 1..].trim();
                     // Value format: "Basic <base64>". Match the "Basic " prefix
                     // case-insensitively; compare the base64 part verbatim.
@@ -97,10 +98,7 @@ async fn insert_task(
     save_dir: &std::path::Path,
 ) -> DownloadTask {
     let db_path = db_dir.join("test.db");
-    let (mgr, _rx) = DownloadManager::new(
-        &db_path,
-        parts_dir.to_path_buf(),
-    );
+    let (mgr, _rx) = DownloadManager::new(&db_path, parts_dir.to_path_buf());
     let nd = NewDownload {
         url: url.to_string(),
         save_dir: Some(save_dir.to_string_lossy().to_string()),
@@ -126,6 +124,7 @@ async fn insert_task(
         webpage_url: None,
         checksum_algorithm: None,
         on_complete: None,
+        mirrors: Vec::new(),
     };
     let id = mgr.add(nd).await.expect("add");
     mgr.get(id).expect("get")
@@ -146,14 +145,7 @@ async fn correct_credentials_resolve_to_basic_header() {
     let dl = ChunkDownloader::new(PathBuf::from("/tmp"), speed);
     dl.set_credentials(creds);
 
-    let task = insert_task(
-        data.path(),
-        &parts,
-        "auth-queue",
-        &url,
-        dirs.path(),
-    )
-    .await;
+    let task = insert_task(data.path(), &parts, "auth-queue", &url, dirs.path()).await;
     assert_eq!(task.queue, "auth-queue");
 
     // The probe path must NOT return 401, because we have the
@@ -179,14 +171,7 @@ async fn missing_credentials_yield_no_auth_header() {
     let dl = ChunkDownloader::new(PathBuf::from("/tmp"), speed);
     dl.set_credentials(creds);
 
-    let task = insert_task(
-        data.path(),
-        &parts,
-        "noauth-queue",
-        &url,
-        dirs.path(),
-    )
-    .await;
+    let task = insert_task(data.path(), &parts, "noauth-queue", &url, dirs.path()).await;
     let res = dl.probe(&task).await;
     match res {
         Err(DownloadError::HttpStatus(401)) => {}
@@ -203,20 +188,15 @@ async fn wrong_credentials_yield_401_on_real_request() {
     std::fs::create_dir_all(&parts).unwrap();
 
     let creds = Arc::new(CredentialStore::new(data.path()));
-    creds.set("auth-queue", "alice:WRONG").expect("set wrong creds");
+    creds
+        .set("auth-queue", "alice:WRONG")
+        .expect("set wrong creds");
 
     let speed = Arc::new(AtomicU64::new(0));
     let dl = ChunkDownloader::new(PathBuf::from("/tmp"), speed);
     dl.set_credentials(creds);
 
-    let task = insert_task(
-        data.path(),
-        &parts,
-        "auth-queue",
-        &url,
-        dirs.path(),
-    )
-    .await;
+    let task = insert_task(data.path(), &parts, "auth-queue", &url, dirs.path()).await;
     let res = dl.probe(&task).await;
     match res {
         Err(DownloadError::HttpStatus(401)) => {}
@@ -270,15 +250,19 @@ async fn credentials_are_per_queue_not_shared() {
 
     assert!(a_val.contains(':'), "queue-a uses Basic auth");
     assert!(!b_val.contains(':'), "queue-b uses Bearer auth");
-    assert!(matches!(c_val, Err(downpilot_core::credentials::CredError::NotConfigured)),
-            "queue-c has no cred, got {c_val:?}");
+    assert!(
+        matches!(
+            c_val,
+            Err(downpilot_core::credentials::CredError::NotConfigured)
+        ),
+        "queue-c has no cred, got {c_val:?}"
+    );
 
     // Sanity: encode the Basic value the way the downloader does.
     let (u, p) = a_val.split_once(':').unwrap();
     let expected_a = format!(
         "Basic {}",
-        base64::engine::general_purpose::STANDARD
-            .encode(format!("{u}:{p}").as_bytes())
+        base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}").as_bytes())
     );
     let expected_b = format!("Bearer {b_val}");
     assert!(expected_a.starts_with("Basic "));

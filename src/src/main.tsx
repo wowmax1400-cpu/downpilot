@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { applyTheme } from "./themes";
+import { I18nProvider } from "./i18n";
 import "./index.css";
 
 // Load persisted theme before first paint to avoid a flash of the default
@@ -17,6 +18,8 @@ import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <I18nProvider>
+      <App />
+    </I18nProvider>
   </React.StrictMode>
 );

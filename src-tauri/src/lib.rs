@@ -49,20 +49,14 @@ async fn add_downloads_batch(
 /// this to highlight rows that are already in the table before the
 /// user clicks "Download Selected".
 #[tauri::command]
-fn find_existing_download_by_url(
-    state: State<'_, AppState>,
-    url: String,
-) -> Option<i64> {
+fn find_existing_download_by_url(state: State<'_, AppState>, url: String) -> Option<i64> {
     state.manager.db.find_by_url(&url).ok().flatten()
 }
 
 /// Phase 3C: same but returns the count (for "this URL is in the
 /// table N times" indicators).
 #[tauri::command]
-fn count_existing_downloads_by_url(
-    state: State<'_, AppState>,
-    url: String,
-) -> i64 {
+fn count_existing_downloads_by_url(state: State<'_, AppState>, url: String) -> i64 {
     state.manager.db.count_by_url(&url).unwrap_or(0)
 }
 
@@ -94,7 +88,15 @@ async fn analyze_url(
     referer: Option<String>,
     user_agent: Option<String>,
 ) -> Result<downpilot_core::models::MediaInfo, String> {
-    state.manager.analyze(&url, cookies.as_deref(), referer.as_deref(), user_agent.as_deref()).await
+    state
+        .manager
+        .analyze(
+            &url,
+            cookies.as_deref(),
+            referer.as_deref(),
+            user_agent.as_deref(),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -165,7 +167,10 @@ async fn grab_site(
     rules: Option<downpilot_core::models::GrabRules>,
 ) -> Result<Vec<downpilot_core::models::GrabbedLink>, String> {
     let r = rules.unwrap_or_else(downpilot_core::models::GrabRules::sensible_defaults);
-    state.manager.grab_site_with_rules(&url, limit.unwrap_or(50), &r).await
+    state
+        .manager
+        .grab_site_with_rules(&url, limit.unwrap_or(50), &r)
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -179,12 +184,18 @@ fn list_queues(state: State<'_, AppState>) -> Vec<downpilot_core::models::Downlo
 }
 
 #[tauri::command]
-fn create_queue(state: State<'_, AppState>, queue: downpilot_core::models::DownloadQueue) -> Result<(), String> {
+fn create_queue(
+    state: State<'_, AppState>,
+    queue: downpilot_core::models::DownloadQueue,
+) -> Result<(), String> {
     state.manager.create_queue(queue)
 }
 
 #[tauri::command]
-fn update_queue(state: State<'_, AppState>, queue: downpilot_core::models::DownloadQueue) -> Result<(), String> {
+fn update_queue(
+    state: State<'_, AppState>,
+    queue: downpilot_core::models::DownloadQueue,
+) -> Result<(), String> {
     state.manager.update_queue(queue)
 }
 
@@ -199,7 +210,10 @@ fn list_sites(state: State<'_, AppState>) -> Vec<downpilot_core::models::SiteRul
 }
 
 #[tauri::command]
-fn save_site(state: State<'_, AppState>, site: downpilot_core::models::SiteRule) -> Result<(), String> {
+fn save_site(
+    state: State<'_, AppState>,
+    site: downpilot_core::models::SiteRule,
+) -> Result<(), String> {
     state.manager.save_site(site)
 }
 
@@ -211,7 +225,10 @@ fn delete_site(state: State<'_, AppState>, domain: String) -> Result<(), String>
 /// Test which SiteRule would apply to a hypothetical URL. Used by the
 /// UI to show a preview while the user is typing a domain.
 #[tauri::command]
-fn test_site_match(state: State<'_, AppState>, url: String) -> Option<downpilot_core::models::SiteRule> {
+fn test_site_match(
+    state: State<'_, AppState>,
+    url: String,
+) -> Option<downpilot_core::models::SiteRule> {
     state.manager.test_site_match(&url)
 }
 
@@ -221,7 +238,10 @@ fn list_schedules(state: State<'_, AppState>) -> Vec<downpilot_core::models::Sch
 }
 
 #[tauri::command]
-fn save_schedule(state: State<'_, AppState>, schedule: downpilot_core::models::Schedule) -> Result<i64, String> {
+fn save_schedule(
+    state: State<'_, AppState>,
+    schedule: downpilot_core::models::Schedule,
+) -> Result<i64, String> {
     state.manager.save_schedule(schedule)
 }
 
@@ -236,7 +256,10 @@ fn list_categories(state: State<'_, AppState>) -> Vec<downpilot_core::models::Ca
 }
 
 #[tauri::command]
-fn save_category(state: State<'_, AppState>, category: downpilot_core::models::Category) -> Result<(), String> {
+fn save_category(
+    state: State<'_, AppState>,
+    category: downpilot_core::models::Category,
+) -> Result<(), String> {
     state.manager.save_category(category)
 }
 
@@ -291,7 +314,11 @@ fn set_save_dir(state: State<'_, AppState>, id: i64, dir: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn set_proxy_url(state: State<'_, AppState>, id: i64, proxy_url: Option<String>) -> Result<(), String> {
+fn set_proxy_url(
+    state: State<'_, AppState>,
+    id: i64,
+    proxy_url: Option<String>,
+) -> Result<(), String> {
     state.manager.set_proxy_url(id, proxy_url.as_deref())
 }
 
@@ -338,8 +365,15 @@ fn export_downloads(state: State<'_, AppState>, path: String) -> Result<usize, S
 }
 
 #[tauri::command]
-async fn import_downloads(state: State<'_, AppState>, path: String, start: Option<bool>) -> Result<usize, String> {
-    state.manager.import_downloads(&path, start.unwrap_or(false)).await
+async fn import_downloads(
+    state: State<'_, AppState>,
+    path: String,
+    start: Option<bool>,
+) -> Result<usize, String> {
+    state
+        .manager
+        .import_downloads(&path, start.unwrap_or(false))
+        .await
 }
 
 #[tauri::command]
@@ -359,7 +393,15 @@ async fn probe_url(
     referer: Option<String>,
     user_agent: Option<String>,
 ) -> Result<downpilot_core::models::ProbeInfo, String> {
-    state.manager.probe_url(&url, cookies.as_deref(), referer.as_deref(), user_agent.as_deref()).await
+    state
+        .manager
+        .probe_url(
+            &url,
+            cookies.as_deref(),
+            referer.as_deref(),
+            user_agent.as_deref(),
+        )
+        .await
 }
 
 /// Read a text file from disk and pull out the URLs it contains. Used by
@@ -370,7 +412,11 @@ fn read_url_file(path: String, max_bytes: Option<u64>) -> Result<Vec<String>, St
     let p = std::path::Path::new(&path);
     let data = std::fs::read(p).map_err(|e| format!("read failed: {e}"))?;
     let cap = max_bytes.unwrap_or(1_048_576) as usize; // 1 MiB cap
-    let slice: &[u8] = if data.len() > cap { &data[..cap] } else { &data[..] };
+    let slice: &[u8] = if data.len() > cap {
+        &data[..cap]
+    } else {
+        &data[..]
+    };
     let text = String::from_utf8_lossy(slice);
     Ok(extract_urls(&text))
 }
@@ -426,8 +472,14 @@ fn extract_urls(text: &str) -> Vec<String> {
 }
 
 fn starts_with_scheme_at(bytes: &[u8], i: usize) -> Option<usize> {
-    for prefix in [b"https://".as_slice(), b"http://".as_slice(), b"ftp://".as_slice()] {
-        if i + prefix.len() <= bytes.len() && bytes[i..i + prefix.len()].eq_ignore_ascii_case(prefix) {
+    for prefix in [
+        b"https://".as_slice(),
+        b"http://".as_slice(),
+        b"ftp://".as_slice(),
+    ] {
+        if i + prefix.len() <= bytes.len()
+            && bytes[i..i + prefix.len()].eq_ignore_ascii_case(prefix)
+        {
             return Some(prefix.len());
         }
     }
@@ -437,7 +489,11 @@ fn starts_with_scheme_at(bytes: &[u8], i: usize) -> Option<usize> {
 /// Toggle a queue's enabled flag. Disabled queues park incoming tasks as
 /// Queued and don't promote them to Downloading until re-enabled.
 #[tauri::command]
-fn set_queue_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), String> {
+fn set_queue_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<(), String> {
     state.manager.set_queue_enabled(&name, enabled)
 }
 
@@ -472,11 +528,7 @@ fn force_start_download(state: State<'_, AppState>, id: i64) -> Result<(), Strin
 /// Set a download's priority (High=+10, Normal=0, Low=-10). Persisted via
 /// `Db::set_priority` so the change survives a restart.
 #[tauri::command]
-fn set_download_priority(
-    state: State<'_, AppState>,
-    id: i64,
-    priority: i32,
-) -> Result<(), String> {
+fn set_download_priority(state: State<'_, AppState>, id: i64, priority: i32) -> Result<(), String> {
     state.manager.set_download_priority(id, priority)
 }
 
@@ -484,21 +536,13 @@ fn set_download_priority(
 /// `priority` integer is swapped with its neighbour so the relative
 /// order matches what the user sees in the panel.
 #[tauri::command]
-fn reorder_queue(
-    state: State<'_, AppState>,
-    name: String,
-    direction: i32,
-) -> Result<(), String> {
+fn reorder_queue(state: State<'_, AppState>, name: String, direction: i32) -> Result<(), String> {
     state.manager.reorder_queue(&name, direction)
 }
 
 /// Move a queue to the absolute top or bottom of the ordering.
 #[tauri::command]
-fn move_queue_to(
-    state: State<'_, AppState>,
-    name: String,
-    position: String,
-) -> Result<(), String> {
+fn move_queue_to(state: State<'_, AppState>, name: String, position: String) -> Result<(), String> {
     state.manager.move_queue_to(&name, &position)
 }
 
@@ -539,7 +583,6 @@ fn copy_text_to_clipboard(_state: State<'_, AppState>, text: String) -> Result<(
     Ok(())
 }
 
-
 #[tauri::command]
 fn active_profiles(state: State<'_, AppState>) -> Vec<downpilot_core::models::ActiveProfile> {
     state.manager.active_profiles()
@@ -551,10 +594,7 @@ fn effective_queue_speed(state: State<'_, AppState>, queue: String) -> u64 {
 }
 
 #[tauri::command]
-fn queue_credential_status(
-    state: State<'_, AppState>,
-    queue: String,
-) -> bool {
+fn queue_credential_status(state: State<'_, AppState>, queue: String) -> bool {
     state.creds.is_configured(&queue)
 }
 
@@ -571,10 +611,7 @@ fn set_queue_credential(
 }
 
 #[tauri::command]
-fn clear_queue_credential(
-    state: State<'_, AppState>,
-    queue: String,
-) -> Result<(), String> {
+fn clear_queue_credential(state: State<'_, AppState>, queue: String) -> Result<(), String> {
     state
         .creds
         .clear(&queue)
@@ -582,10 +619,7 @@ fn clear_queue_credential(
 }
 
 #[tauri::command]
-fn test_queue_credential(
-    state: State<'_, AppState>,
-    queue: String,
-) -> serde_json::Value {
+fn test_queue_credential(state: State<'_, AppState>, queue: String) -> serde_json::Value {
     // Lightweight self-test: confirm the secret is readable and non-empty,
     // without exposing the value to the UI. The UI shows a single
     // "Tested OK" / "Not configured" badge.
@@ -613,13 +647,15 @@ async fn read_clipboard() -> Option<std::process::Output> {
     // selection and killed menus — we now read event-driven instead of polling.
     let mut cmd = tokio::process::Command::new("wl-paste");
     cmd.kill_on_drop(true);
-    match cmd.output().await {
-        Ok(out) => return Some(out),
-        Err(_) => {}
+    if let Ok(out) = cmd.output().await {
+        return Some(out);
     }
     // X11 fallback: explicitly target the CLIPBOARD selection (not PRIMARY).
     let mut cmd = tokio::process::Command::new("xclip");
-    cmd.arg("-selection").arg("clipboard").arg("-o").kill_on_drop(true);
+    cmd.arg("-selection")
+        .arg("clipboard")
+        .arg("-o")
+        .kill_on_drop(true);
     cmd.output().await.ok()
 }
 
@@ -636,7 +672,9 @@ async fn read_clipboard() -> Option<std::process::Output> {
 /// false we never touch the clipboard, so context menus can never be dismissed.
 pub fn start_clipboard_monitor(handle: AppHandle, enabled: bool) {
     if !enabled {
-        eprintln!("[clipboard-monitor] disabled (clipboard_monitor=false) — context-menu bug avoided");
+        eprintln!(
+            "[clipboard-monitor] disabled (clipboard_monitor=false) — context-menu bug avoided"
+        );
         return;
     }
     tauri::async_runtime::spawn(async move {
@@ -647,12 +685,9 @@ pub fn start_clipboard_monitor(handle: AppHandle, enabled: bool) {
             // Plain `wl-paste` reads the CLIPBOARD (Ctrl+C) selection only; we
             // never pass `-p`/`--primary`. The timeout kills the child if the
             // clipboard owner is unresponsive and we just skip this tick.
-            let out = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                read_clipboard(),
-            )
-            .await
-            .unwrap_or(None);
+            let out = tokio::time::timeout(std::time::Duration::from_secs(3), read_clipboard())
+                .await
+                .unwrap_or(None);
             let Some(out) = out else { continue };
             if !out.status.success() {
                 continue;
@@ -667,9 +702,13 @@ pub fn start_clipboard_monitor(handle: AppHandle, enabled: bool) {
             last = Some(text.clone());
             // Only react to content that looks like a single URL.
             let trimmed = text.trim();
-            let looks_url = trimmed.starts_with("http://")
-                || trimmed.starts_with("https://")
-                || (trimmed.contains('.') && !trimmed.contains(char::is_whitespace) && trimmed.contains('/'));
+            let lowered = trimmed.to_ascii_lowercase();
+            let looks_url = lowered.starts_with("http://")
+                || lowered.starts_with("https://")
+                || lowered.starts_with("ftp://")
+                || (trimmed.contains('.')
+                    && !trimmed.contains(char::is_whitespace)
+                    && trimmed.contains('/'));
             if looks_url {
                 let _ = handle.emit("downloads://clipboard", &trimmed);
             }
@@ -713,14 +752,24 @@ enum NmhMessage {
     /// mirror UI without holding a long-lived Tauri command open.
     List,
     /// Re-queue a task that was previously paused/stopped/failed.
-    Start { id: i64 },
-    Pause { id: i64 },
-    Resume { id: i64 },
+    Start {
+        id: i64,
+    },
+    Pause {
+        id: i64,
+    },
+    Resume {
+        id: i64,
+    },
     /// User-initiated stop. The task transitions to Stopped; partial files
     /// are kept so Resume can continue from where it left off.
-    Cancel { id: i64 },
+    Cancel {
+        id: i64,
+    },
     /// Rescan the disk to recover the on-disk byte count for a paused task.
-    Recheck { id: i64 },
+    Recheck {
+        id: i64,
+    },
     /// Returns the app's browser-integration configuration so the extension
     /// enforces the SAME capture rules the user set in the app's Settings.
     Config,
@@ -792,6 +841,52 @@ struct NmhResponse {
     _req_id: Option<u64>,
 }
 
+fn redact_browser_task_secrets(mut value: serde_json::Value) -> serde_json::Value {
+    if let serde_json::Value::Array(tasks) = &mut value {
+        for task in tasks {
+            if let serde_json::Value::Object(fields) = task {
+                fields.remove("cookies");
+                if let Some(serde_json::Value::String(proxy)) = fields.get_mut("proxy_url") {
+                    *proxy = downpilot_core::sanitize::sanitize_proxy_url(proxy);
+                }
+            }
+        }
+    }
+    value
+}
+
+#[cfg(test)]
+mod browser_task_view_tests {
+    use super::redact_browser_task_secrets;
+
+    #[test]
+    fn browser_task_list_does_not_expose_cookies() {
+        let value = serde_json::json!([{
+            "id": 1,
+            "url": "https://example.test/file",
+            "cookies": "session=secret"
+        }]);
+        let redacted = redact_browser_task_secrets(value);
+        let encoded = serde_json::to_string(&redacted).unwrap();
+        assert!(!encoded.contains("cookies"));
+        assert!(!encoded.contains("session=secret"));
+    }
+
+    #[test]
+    fn browser_task_list_redacts_proxy_password() {
+        let value = serde_json::json!([{
+            "id": 1,
+            "url": "https://example.test/file",
+            "proxy_url": "http://user:supersecret@proxy.local:8080"
+        }]);
+        let redacted = redact_browser_task_secrets(value);
+        let encoded = serde_json::to_string(&redacted).unwrap();
+        assert!(!encoded.contains("supersecret"));
+        assert!(!encoded.contains("user:"));
+        assert!(encoded.contains("http://proxy.local:8080"));
+    }
+}
+
 pub async fn run_nmh_server(manager: Arc<DownloadManager>) {
     let listener = match TcpListener::bind(("127.0.0.1", NMH_PORT)).await {
         Ok(l) => l,
@@ -830,13 +925,17 @@ fn extract_req_id(frame: &[u8]) -> Option<u64> {
         })
 }
 
-async fn handle_nmh_conn(mut stream: TcpStream, manager: Arc<DownloadManager>) -> std::io::Result<()> {
+async fn handle_nmh_conn(
+    mut stream: TcpStream,
+    manager: Arc<DownloadManager>,
+) -> std::io::Result<()> {
     loop {
         let Some(frame) = read_frame(&mut stream).await? else {
             return Ok(());
         };
         let resp = handle_nmh_message(&frame, &manager).await;
-        let out = serde_json::to_vec(&resp).unwrap_or_else(|_| br#"{"ok":false,"error":"serialize"}"#.to_vec());
+        let out = serde_json::to_vec(&resp)
+            .unwrap_or_else(|_| br#"{"ok":false,"error":"serialize"}"#.to_vec());
         stream.write_all(&(out.len() as u32).to_le_bytes()).await?;
         stream.write_all(&out).await?;
         stream.flush().await?;
@@ -852,7 +951,10 @@ async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Option<Vec<u8>>> 
     }
     let len = u32::from_le_bytes(len_buf) as usize;
     if len > 16 * 1024 * 1024 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
@@ -881,23 +983,64 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
         }
     };
     let resp = match msg {
-        NmhMessage::Ping => NmhResponse { ok: true, data: Some(serde_json::json!({ "pong": true })), error: None, _req_id: req_id },
+        NmhMessage::Ping => NmhResponse {
+            ok: true,
+            data: Some(serde_json::json!({ "pong": true })),
+            error: None,
+            _req_id: req_id,
+        },
         NmhMessage::Status => {
-            let active = manager.list().iter().filter(|t| t.status == Status::Downloading).count();
+            let active = manager
+                .list()
+                .iter()
+                .filter(|t| t.status == Status::Downloading)
+                .count();
             NmhResponse {
                 ok: true,
-                data: Some(serde_json::json!({ "active": active, "version": env!("CARGO_PKG_VERSION") })),
+                data: Some(
+                    serde_json::json!({ "active": active, "version": env!("CARGO_PKG_VERSION") }),
+                ),
                 error: None,
                 _req_id: req_id,
             }
         }
-        NmhMessage::Analyze { url, cookies, referer, user_agent } => {
-            match manager.analyze(&url, cookies.as_deref(), referer.as_deref(), user_agent.as_deref()).await {
-                Ok(media) => NmhResponse { ok: true, data: Some(serde_json::to_value(media).unwrap_or_default()), error: None, _req_id: req_id },
-                Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+        NmhMessage::Analyze {
+            url,
+            cookies,
+            referer,
+            user_agent,
+        } => {
+            match manager
+                .analyze(
+                    &url,
+                    cookies.as_deref(),
+                    referer.as_deref(),
+                    user_agent.as_deref(),
+                )
+                .await
+            {
+                Ok(media) => NmhResponse {
+                    ok: true,
+                    data: Some(serde_json::to_value(media).unwrap_or_default()),
+                    error: None,
+                    _req_id: req_id,
+                },
+                Err(e) => NmhResponse {
+                    ok: false,
+                    data: None,
+                    error: Some(e),
+                    _req_id: req_id,
+                },
             }
         }
-        NmhMessage::Download { url, format_id, filename, referer, user_agent, cookies } => {
+        NmhMessage::Download {
+            url,
+            format_id,
+            filename,
+            referer,
+            user_agent,
+            cookies,
+        } => {
             let nd = NewDownload {
                 url,
                 filename,
@@ -923,41 +1066,115 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 priority: None,
                 browser_dedup_id: String::new(),
                 skip_probe: false,
+                mirrors: Vec::new(),
             };
             match manager.add(nd).await {
-                Ok(id) => NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id })), error: None, _req_id: req_id },
-                Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+                Ok(id) => NmhResponse {
+                    ok: true,
+                    data: Some(serde_json::json!({ "id": id })),
+                    error: None,
+                    _req_id: req_id,
+                },
+                Err(e) => NmhResponse {
+                    ok: false,
+                    data: None,
+                    error: Some(e),
+                    _req_id: req_id,
+                },
             }
         }
         NmhMessage::List => {
             let tasks = manager.list();
-            let data = serde_json::to_value(&tasks).unwrap_or(serde_json::json!([]));
-            NmhResponse { ok: true, data: Some(data), error: None, _req_id: req_id }
+            let data = serde_json::to_value(&tasks)
+                .map(redact_browser_task_secrets)
+                .unwrap_or(serde_json::json!([]));
+            NmhResponse {
+                ok: true,
+                data: Some(data),
+                error: None,
+                _req_id: req_id,
+            }
         }
         NmhMessage::Start { id } => match manager.get(id) {
             Some(task) => {
                 manager.start(task);
-                NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id })), error: None, _req_id: req_id }
+                NmhResponse {
+                    ok: true,
+                    data: Some(serde_json::json!({ "id": id })),
+                    error: None,
+                    _req_id: req_id,
+                }
             }
-            None => NmhResponse { ok: false, data: None, error: Some("task not found".into()), _req_id: req_id },
+            None => NmhResponse {
+                ok: false,
+                data: None,
+                error: Some("task not found".into()),
+                _req_id: req_id,
+            },
         },
         NmhMessage::Pause { id } => match manager.pause(id) {
-            Ok(()) => NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id })), error: None, _req_id: req_id },
-            Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+            Ok(()) => NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "id": id })),
+                error: None,
+                _req_id: req_id,
+            },
+            Err(e) => NmhResponse {
+                ok: false,
+                data: None,
+                error: Some(e),
+                _req_id: req_id,
+            },
         },
         NmhMessage::Resume { id } => match manager.resume(id) {
-            Ok(()) => NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id })), error: None, _req_id: req_id },
-            Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+            Ok(()) => NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "id": id })),
+                error: None,
+                _req_id: req_id,
+            },
+            Err(e) => NmhResponse {
+                ok: false,
+                data: None,
+                error: Some(e),
+                _req_id: req_id,
+            },
         },
         NmhMessage::Cancel { id } => match manager.cancel(id) {
-            Ok(()) => NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id })), error: None, _req_id: req_id },
-            Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+            Ok(()) => NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "id": id })),
+                error: None,
+                _req_id: req_id,
+            },
+            Err(e) => NmhResponse {
+                ok: false,
+                data: None,
+                error: Some(e),
+                _req_id: req_id,
+            },
         },
         NmhMessage::Recheck { id } => match manager.recheck(id) {
-            Ok(()) => NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id })), error: None, _req_id: req_id },
-            Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+            Ok(()) => NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "id": id })),
+                error: None,
+                _req_id: req_id,
+            },
+            Err(e) => NmhResponse {
+                ok: false,
+                data: None,
+                error: Some(e),
+                _req_id: req_id,
+            },
         },
-                NmhMessage::BrowserDownloadDetected { url, filename, referer, cookies, browser_id } => {
+        NmhMessage::BrowserDownloadDetected {
+            url,
+            filename,
+            referer,
+            cookies,
+            browser_id,
+        } => {
             // Run the same probe the in-app Add dialog uses (HEAD → 1-byte
             // ranged GET fallback). The extension surfaces the result in
             // the ask-notification so the user can confirm filename /
@@ -1004,9 +1221,25 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
             // The extension owns the "Try Download Anyway" path. We just
             // tell it that the probe failed; the user can still choose to
             // submit, and the engine will re-probe at byte-flow time.
-            NmhResponse { ok: true, data: Some(data), error: None, _req_id: req_id }
+            NmhResponse {
+                ok: true,
+                data: Some(data),
+                error: None,
+                _req_id: req_id,
+            }
         }
-        NmhMessage::SubmitBrowserDownload { url, filename, referer, user_agent, cookies, category, queue, save_dir, browser_id, try_download_anyway } => {
+        NmhMessage::SubmitBrowserDownload {
+            url,
+            filename,
+            referer,
+            user_agent,
+            cookies,
+            category,
+            queue,
+            save_dir,
+            browser_id,
+            try_download_anyway,
+        } => {
             let nd = NewDownload {
                 url,
                 filename,
@@ -1032,10 +1265,21 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 priority: None,
                 browser_dedup_id: browser_id,
                 skip_probe: try_download_anyway,
+                mirrors: Vec::new(),
             };
             match manager.add(nd).await {
-                Ok(id) => NmhResponse { ok: true, data: Some(serde_json::json!({ "id": id, "captured": true })), error: None, _req_id: req_id },
-                Err(e) => NmhResponse { ok: false, data: None, error: Some(e), _req_id: req_id },
+                Ok(id) => NmhResponse {
+                    ok: true,
+                    data: Some(serde_json::json!({ "id": id, "captured": true })),
+                    error: None,
+                    _req_id: req_id,
+                },
+                Err(e) => NmhResponse {
+                    ok: false,
+                    data: None,
+                    error: Some(e),
+                    _req_id: req_id,
+                },
             }
         }
         NmhMessage::IgnoreBrowserDownload { url, browser_id } => {
@@ -1043,7 +1287,12 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
             // the user to inspect under History > Ignored if we add such a
             // view later. Cookies are never seen here on purpose.
             let _ = (url, browser_id);
-            NmhResponse { ok: true, data: Some(serde_json::json!({ "ignored": true })), error: None, _req_id: req_id }
+            NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "ignored": true })),
+                error: None,
+                _req_id: req_id,
+            }
         }
         NmhMessage::SetAlwaysAllowExtension { extension, op } => {
             // Persist the user's "Always download this type" preference.
@@ -1052,10 +1301,15 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
             //
             // Sanity: extension is non-empty, <=16 chars, alnum + dot. We
             // refuse anything else to keep this storage safe.
-            let cleaned = extension.trim().trim_start_matches('.').to_ascii_lowercase();
+            let cleaned = extension
+                .trim()
+                .trim_start_matches('.')
+                .to_ascii_lowercase();
             if cleaned.is_empty()
                 || cleaned.len() > 16
-                || !cleaned.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
+                || !cleaned
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.')
             {
                 return NmhResponse {
                     ok: false,
@@ -1103,7 +1357,7 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 _req_id: req_id,
             }
         }
-NmhMessage::Config => {
+        NmhMessage::Config => {
             let s = manager.settings();
             // Only expose what the extension needs to enforce capture rules.
             // All lists are comma-separated (empty when unset).
@@ -1329,7 +1583,6 @@ pub fn run() {
 #[allow(unused)]
 fn _typecheck(_: &mut mpsc::UnboundedReceiver<EngineEvent>) {}
 
-
 // ---------------------------------------------------------------------------
 // Phase 1: tray icon, single-instance, deep-link helpers
 // ---------------------------------------------------------------------------
@@ -1347,9 +1600,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&show, &pause_all, &resume_all, &quit])?;
 
     TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().cloned().ok_or_else(|| {
-            tauri::Error::AssetNotFound("default window icon".into())
-        })?)
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?,
+        )
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -1424,9 +1679,13 @@ fn handle_external_launch(app: &tauri::AppHandle, argv: &[String]) {
         let _ = win.set_focus();
     }
     // First argv[0] is the binary; the rest is user args. Pick the first
-    // http(s) URL we see, or anything starting with `downpilot://`.
+    // http(s)/ftp URL we see, or anything starting with `downpilot://`.
     for arg in argv.iter().skip(1) {
-        if arg.starts_with("http://") || arg.starts_with("https://") {
+        let lowered = arg.to_ascii_lowercase();
+        if lowered.starts_with("http://")
+            || lowered.starts_with("https://")
+            || lowered.starts_with("ftp://")
+        {
             let _ = app.emit("cli://add_url", arg.clone());
             return;
         }
@@ -1444,7 +1703,9 @@ fn handle_external_launch(app: &tauri::AppHandle, argv: &[String]) {
 fn route_deep_link(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
     // Cheap parse without pulling in the `url` crate. Format is:
     //   downpilot://add?url=https%3A%2F%2Fexample.com%2Ffile.zip
-    let after = url.strip_prefix("downpilot://").ok_or("not a downpilot:// url")?;
+    let after = url
+        .strip_prefix("downpilot://")
+        .ok_or("not a downpilot:// url")?;
     let (verb, query) = match after.split_once('?') {
         Some((v, q)) => (v, q),
         None => (after, ""),
@@ -1508,7 +1769,6 @@ fn from_hex(b: u8) -> Option<u8> {
         _ => None,
     }
 }
-
 
 #[cfg(test)]
 mod req_id_compat {

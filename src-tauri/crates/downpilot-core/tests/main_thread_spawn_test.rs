@@ -57,6 +57,7 @@ fn nd(url: &str) -> NewDownload {
         priority: None,
         browser_dedup_id: String::new(),
         skip_probe: true,
+        mirrors: Vec::new(),
     }
 }
 
@@ -64,8 +65,9 @@ fn nd(url: &str) -> NewDownload {
 /// runtime so it stays alive while the manager's spawn path runs the task.
 fn serve_bytes(rt: &tokio::runtime::Runtime, body: Vec<u8>) -> String {
     let body = Arc::new(body);
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener = rt.block_on(async { tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap() });
+    use tokio::io::AsyncReadExt;
+    let listener =
+        rt.block_on(async { tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap() });
     let addr = listener.local_addr().unwrap();
     rt.spawn(async move {
         loop {
@@ -109,7 +111,9 @@ fn start_from_runtimeless_thread_does_not_panic() {
     });
     // A panic inside the thread propagates to join(); the old code would
     // have aborted the process here.
-    handle.join().expect("start() must not panic without a runtime");
+    handle
+        .join()
+        .expect("start() must not panic without a runtime");
 }
 
 /// The runtime installed via `install_runtime()` must actually drive the
@@ -131,7 +135,10 @@ fn installed_runtime_drives_task_to_completion() {
     let save_dir = tmp.path().join("out");
     std::fs::create_dir_all(&save_dir).unwrap();
 
-    let id = mgr.db.insert(&nd(&url), save_dir.to_str().unwrap()).unwrap();
+    let id = mgr
+        .db
+        .insert(&nd(&url), save_dir.to_str().unwrap())
+        .unwrap();
     let task = mgr.get(id).expect("task");
 
     mgr.install_runtime(rt.handle().clone());

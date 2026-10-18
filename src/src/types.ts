@@ -80,6 +80,10 @@ export interface DownloadTask {
   // has explicitly bypassed the queue ordering for this task.
   // Cleared by the engine whenever the task leaves Downloading.
   force_started: boolean;
+  /** Mirror/multi-source: persisted alternate URLs + rotation index.
+   *  `mirror_index` 0 = primary URL; N = mirrors[N-1]. */
+  mirrors: string[];
+  mirror_index: number;
 }
 
 export interface NewDownload {
@@ -109,6 +113,15 @@ export interface NewDownload {
   /** Phase 3B: download-level priority (High=+10, Normal=0, Low=-10).
    *  Defaults to Normal when omitted. */
   priority?: number | null;
+  /** Mirror/multi-source: alternate URLs for the same object, tried in
+   *  order when the primary fails with a retryable error. Empty = no
+   *  mirrors. */
+  mirrors?: string[];
+}
+
+export interface MirrorInfo {
+  index: number;
+  url: string;
 }
 
 export interface DownloadQueue {
@@ -225,6 +238,7 @@ export interface MediaInfo {
 export type EngineEvent =
   | { kind: "added"; task: DownloadTask }
   | { kind: "progress"; id: number; downloaded: number; total: number; speed_bps: number }
+  | { kind: "segment_progress"; id: number; idx: number; bytes: number; size: number }
   | { kind: "status_changed"; id: number; status: Status; error: string | null }
   | { kind: "removed"; id: number }
   | { kind: "finished"; task: DownloadTask }
@@ -299,7 +313,8 @@ export type SortField =
   | "queue"
   | "added_at"
   | "completed_at"
-  | "save_dir";
+  | "save_dir"
+  | "last_try";
 
 export type SortDir = "asc" | "desc";
 

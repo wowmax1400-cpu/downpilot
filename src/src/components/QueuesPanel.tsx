@@ -35,6 +35,57 @@ function countsForQueue(store: DownloadsStore, name: string) {
   return { active, queued, total };
 }
 
+/**
+ * Phase 3B: live snapshot of one queue, lifted from the engine's
+ * `SchedulerStatus`. The UI uses this to render the "scheduled",
+ * "running", and bandwidth rows without recomputing time windows.
+ */
+function liveForQueue(
+  store: DownloadsStore,
+  name: string,
+): {
+  in_window: boolean;
+  active_schedule_id: number | null;
+  current_speed_kbps: number;
+  configured_speed_kbps: number;
+  auth_configured: boolean;
+  profile_name: string | null;
+} {
+  const status = store.schedulerStatus;
+  if (!status) {
+    return {
+      in_window: true,
+      active_schedule_id: null,
+      current_speed_kbps: 0,
+      configured_speed_kbps: 0,
+      auth_configured: false,
+      profile_name: null,
+    };
+  }
+  const q = status.queues.find((qq) => qq.queue === name);
+  if (!q) {
+    return {
+      in_window: true,
+      active_schedule_id: null,
+      current_speed_kbps: 0,
+      configured_speed_kbps: 0,
+      auth_configured: false,
+      profile_name: null,
+    };
+  }
+  const profile = q.active_schedule_id
+    ? status.active_profiles.find((p) => p.schedule_id === q.active_schedule_id)
+    : null;
+  return {
+    in_window: q.in_own_schedule_window,
+    active_schedule_id: q.active_schedule_id,
+    current_speed_kbps: q.current_speed_kbps,
+    configured_speed_kbps: q.configured_speed_kbps,
+    auth_configured: q.auth_configured,
+    profile_name: profile ? profile.name : null,
+  };
+}
+
 function blankQueue(): DownloadQueue {
   return {
     name: "",
@@ -48,6 +99,7 @@ function blankQueue(): DownloadQueue {
     schedule_end: "06:00",
     on_complete: "",
     on_complete_command: "",
+    next_queue: "",
     proxy_url: "",
     cookies: "",
     user_agent: "",
@@ -129,13 +181,15 @@ export function QueuesPanel({ store, onClose }: Props) {
               {list.length === 0 && (
                 <div className="panel__empty">No queues configured</div>
               )}
-              {list.map((q) => {
+              {list.map((q, idx) => {
                 const c = countsForQueue(store, q.name);
                 return (
                   <QueueRow
                     key={q.name}
                     q={q}
                     counts={c}
+                    isFirst={idx === 0}
+                    isLast={idx === list.length - 1}
                     onEdit={() => setEdit({ ...q })}
                     onDelete={() => remove(q.name)}
                     onToggleEnabled={() => store.setQueueEnabled(q.name, !q.enabled)}
@@ -143,6 +197,9 @@ export function QueuesPanel({ store, onClose }: Props) {
                     onStart={() => store.resumeQueueAction(q.name)}
                     onPause={() => store.pauseQueueAction(q.name)}
                     onStop={() => store.stopQueueAction(q.name)}
+                    onReorder={(direction) => store.reorderQueueAction(q.name, direction)}
+                    onMoveTo={(position) => store.moveQueueToAction(q.name, position)}
+                    live={liveForQueue(store, q.name)}
                   />
                 );
               })}
@@ -242,6 +299,56 @@ export function QueuesPanel({ store, onClose }: Props) {
                 />
              </Field>
            </div>
+          )}
+
+          <Field label="Next queue (auto-start when this queue empties)">
+            <select
+              className="input"
+              value={editing.next_queue ?? ""}
+              onChange={(e) =>
+                setEdit({ ...editing, next_queue: e.target.value })
+              }
+            >
+              <option value="">(no chain)</option>
+              {list
+                .filter((qq) => qq.name !== editing.name)
+                .map((qq) => (
+                  <option key={qq.name} value={qq.name}>
+                    {qq.label || qq.name}
+                  </option>
+                ))}
+            </select>
+          </Field>
+
+          <Field label="On queue completion">
+            <select
+              className="input"
+              value={editing.on_complete || "none"}
+              onChange={(e) =>
+                setEdit({ ...editing, on_complete: e.target.value })
+              }
+            >
+              <option value="none">None</option>
+              <option value="notify">Notification</option>
+              <option value="play_sound">Play sound</option>
+              <option value="open_folder">Open folder</option>
+              <option value="run">Run command (see below)</option>
+              <option value="start_next_queue">Start chained queue</option>
+              <option value="shutdown">Shutdown (requires opt-in)</option>
+              <option value="suspend">Suspend (requires opt-in)</option>
+              <option value="hibernate">Hibernate (requires opt-in)</option>
+            </select>
+          </Field>
+          {editing.on_complete === "run" && (
+            <Field label="Run command (sh -c)">
+              <input
+                className="input"
+                value={editing.on_complete_command ?? ""}
+                onChange={(e) =>
+                  setEdit({ ...editing, on_complete_command: e.target.value })
+                }
+              />
+            </Field>
           )}
 
           <details
@@ -406,6 +513,16 @@ export function QueuesPanel({ store, onClose }: Props) {
 type RowProps = {
   q: DownloadQueue;
   counts: { active: number; queued: number; total: number };
+  live: {
+    in_window: boolean;
+    active_schedule_id: number | null;
+    current_speed_kbps: number;
+    configured_speed_kbps: number;
+    auth_configured: boolean;
+    profile_name: string | null;
+  };
+  isFirst: boolean;
+  isLast: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onToggleEnabled: () => void;
@@ -413,11 +530,16 @@ type RowProps = {
   onStart: () => void;
   onPause: () => void;
   onStop: () => void;
+  onReorder: (direction: number) => void;
+  onMoveTo: (position: "top" | "bottom") => void;
 };
 
 function QueueRow({
   q,
   counts,
+  live,
+  isFirst,
+  isLast,
   onEdit,
   onDelete,
   onToggleEnabled,
@@ -425,6 +547,8 @@ function QueueRow({
   onStart,
   onPause,
   onStop,
+  onReorder,
+  onMoveTo,
 }: RowProps) {
   const [bwEditing, setBwEditing] = React.useState(false);
   const [bwDraft, setBwDraft] = React.useState(String(q.speed_limit_kbps));
@@ -452,7 +576,23 @@ function QueueRow({
       <div className="queue-grid__name">
         <span className="queue-grid__title">{q.label || q.name}</span>
         <span className="queue-grid__sub">{q.name}</span>
-        {q.has_password && (
+        {live.profile_name && (
+          <span
+            className="queue-grid__badge queue-grid__badge--profile"
+            title={`Active bandwidth profile: ${live.profile_name}`}
+          >
+            {live.profile_name} active
+          </span>
+        )}
+        {q.schedule_enabled && !live.in_window && (
+          <span
+            className="queue-grid__badge queue-grid__badge--sched"
+            title={`Scheduled ${q.schedule_start} → ${q.schedule_end}`}
+          >
+            Waiting
+          </span>
+        )}
+        {(live.auth_configured || q.has_password) && (
           <span className="queue-grid__auth-dot" title="Has stored credentials" />
         )}
      </div>
@@ -488,15 +628,28 @@ function QueueRow({
             style={{ width: 90 }}
           />
         ) : (
-          <button
-            className="btn btn--ghost btn--sm"
-            title="Click to edit bandwidth cap"
-            onClick={() => setBwEditing(true)}
+          <span
+            className="queue-grid__bwstack"
+            title={`Configured: ${configured} kbps · Scheduled: ${live.current_speed_kbps} kbps`}
           >
-            {effective > 0
-              ? `${formatBytes(effective * 1024)}/s`
-              : "unlimited"}
-         </button>
+            <button
+              className="btn btn--ghost btn--sm"
+              title="Click to edit bandwidth cap"
+              onClick={() => setBwEditing(true)}
+            >
+              {effective > 0
+                ? `${formatBytes(effective * 1024)}/s`
+                : "unlimited"}
+            </button>
+            {live.current_speed_kbps !== configured && (
+              <span className="queue-grid__bwsched">
+                →
+                {live.current_speed_kbps > 0
+                  ? `${formatBytes(live.current_speed_kbps * 1024)}/s`
+                  : "unlimited"}
+              </span>
+            )}
+          </span>
         )}
      </div>
       <div className="queue-cell--num">{q.max_simultaneous}</div>
@@ -532,12 +685,52 @@ function QueueRow({
         >
           {q.enabled ? "On" : "Off"}
        </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          title="Move this queue up in the order"
+          onClick={() => onReorder(-1)}
+          disabled={isFirst}
+        >
+          ↑
+       </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          title="Move this queue down in the order"
+          onClick={() => onReorder(1)}
+          disabled={isLast}
+        >
+          ↓
+       </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          title="Move this queue to the absolute top"
+          onClick={() => onMoveTo("top")}
+          disabled={isFirst}
+        >
+          ⤒
+       </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          title="Move this queue to the absolute bottom"
+          onClick={() => onMoveTo("bottom")}
+          disabled={isLast}
+        >
+          ⤓
+       </button>
         <button className="btn btn--default btn--sm" onClick={onEdit}>
           Edit
        </button>
         <button className="btn btn--ghost btn--sm" onClick={onDelete}>
           Del
        </button>
+        {q.next_queue && (
+          <span
+            className="queue-grid__chain"
+            title={`When this queue empties, automatically start '${q.next_queue}'`}
+          >
+            → {q.next_queue}
+          </span>
+        )}
      </div>
    </div>
   );

@@ -69,7 +69,10 @@ struct RedirectServer {
     total_hits: Arc<Mutex<HashMap<String, usize>>>,
 }
 
-async fn spawn_redirect_server(paths: &[(String, PathKind)], real_bytes: Vec<u8>) -> RedirectServer {
+async fn spawn_redirect_server(
+    paths: &[(String, PathKind)],
+    real_bytes: Vec<u8>,
+) -> RedirectServer {
     let total = real_bytes.len();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -96,13 +99,23 @@ async fn spawn_redirect_server(paths: &[(String, PathKind)], real_bytes: Vec<u8>
 
     tokio::spawn(async move {
         loop {
-            let Ok((mut stream, _)) = listener.accept().await else { continue };
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
             let path_table = Arc::clone(&path_table);
             let real_bytes = Arc::clone(&real_bytes_arc);
             let final_hits = Arc::clone(&final_hits_clone);
             let total_hits = Arc::clone(&total_hits_clone);
             tokio::spawn(async move {
-                handle_redirect(&mut stream, &path_table, &real_bytes, &final_hits, &total_hits, total).await;
+                handle_redirect(
+                    &mut stream,
+                    &path_table,
+                    &real_bytes,
+                    &final_hits,
+                    &total_hits,
+                    total,
+                )
+                .await;
             });
         }
     });
@@ -116,11 +129,7 @@ async fn spawn_redirect_server(paths: &[(String, PathKind)], real_bytes: Vec<u8>
 }
 
 fn url_for(server: &RedirectServer, path: &str) -> String {
-    format!(
-        "http://{}/{}",
-        server.addr,
-        path.trim_start_matches('/')
-    )
+    format!("http://{}/{}", server.addr, path.trim_start_matches('/'))
 }
 
 /// Stream `data` in `chunk` byte pieces, sleeping `sleep_us` µs between
@@ -147,7 +156,7 @@ fn find_kind<'a>(table: &'a [(String, PathKind)], path: &str) -> Option<&'a Path
     table.iter().find(|(p, _)| p == path).map(|(_, k)| k)
 }
 
-fn find_redirect_target<'a>(table: &'a [(String, PathKind)], from: &str) -> Option<String> {
+fn find_redirect_target(table: &[(String, PathKind)], from: &str) -> Option<String> {
     table.iter().find_map(|(p, k)| {
         if p == from {
             if let PathKind::RedirectTo(target) = k {
@@ -195,7 +204,9 @@ async fn handle_redirect<S>(
         Some(k) => *k,
         None => {
             let _ = stream
-                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
                 .await;
             let _ = stream.shutdown().await;
             return;
@@ -316,6 +327,7 @@ fn new_download(url: &str, filename: &str, save_dir: &str, threads: u32) -> NewD
         start_immediately: true,
         browser_dedup_id: String::new(),
         skip_probe: false,
+        mirrors: Vec::new(),
     }
 }
 
@@ -327,7 +339,10 @@ async fn wait_for_status(
 ) -> bool {
     tokio::time::timeout(timeout, async {
         while let Some(ev) = sink_rx.recv().await {
-            if let EngineEvent::StatusChanged { id: eid, status, .. } = ev {
+            if let EngineEvent::StatusChanged {
+                id: eid, status, ..
+            } = ev
+            {
                 if eid == id && status == want {
                     return true;
                 }
@@ -359,21 +374,32 @@ async fn redirect_resume_completes_with_intact_content() {
     let (tmp, manager, mut sink_rx) = setup();
 
     let id = manager
-        .add(new_download(&url, "redirected.bin", &tmp.to_string_lossy(), 2))
+        .add(new_download(
+            &url,
+            "redirected.bin",
+            &tmp.to_string_lossy(),
+            2,
+        ))
         .await
         .expect("add should succeed (redirect followed during probe)");
 
-    let _ = wait_for_status(&mut sink_rx, id, Status::Downloading, Duration::from_secs(5)).await;
+    let _ = wait_for_status(
+        &mut sink_rx,
+        id,
+        Status::Downloading,
+        Duration::from_secs(5),
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    manager.pause(id).expect("pause should work while downloading");
+    manager
+        .pause(id)
+        .expect("pause should work while downloading");
 
-    let paused =
-        wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
+    let paused = wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
     assert!(paused, "task did not pause");
 
     manager.resume(id).expect("resume should succeed");
-    let done =
-        wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
+    let done = wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
     assert!(done, "resume did not complete");
 
     let out_path = tmp.join("redirected.bin");
@@ -387,14 +413,18 @@ async fn redirect_resume_completes_with_intact_content() {
     // would stay at 1 and the test would still pass (the final file
     // would also fail) — we assert it as documentation, not as a hard
     // gate, since the byte equality is the real correctness check.
-    let entry_hits = server.total_hits.lock().unwrap().get("redirected").copied().unwrap_or(0);
+    let entry_hits = server
+        .total_hits
+        .lock()
+        .unwrap()
+        .get("redirected")
+        .copied()
+        .unwrap_or(0);
     assert!(
         entry_hits >= 2,
         "expected /redirected to be re-hit after pause (got {entry_hits})"
     );
-    println!(
-        "✓ single-hop redirect: /redirected hit {entry_hits} times, final file bytes match"
-    );
+    println!("✓ single-hop redirect: /redirected hit {entry_hits} times, final file bytes match");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -422,12 +452,19 @@ async fn redirect_chain_of_three_replays_all_hops_on_resume() {
         .await
         .expect("add should succeed (3-hop redirect followed during probe)");
 
-    let _ = wait_for_status(&mut sink_rx, id, Status::Downloading, Duration::from_secs(5)).await;
+    let _ = wait_for_status(
+        &mut sink_rx,
+        id,
+        Status::Downloading,
+        Duration::from_secs(5),
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    manager.pause(id).expect("pause should work while downloading");
+    manager
+        .pause(id)
+        .expect("pause should work while downloading");
 
-    let paused =
-        wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
+    let paused = wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
     assert!(paused, "task did not pause");
 
     // Snapshot the hop-hit counts so we can detect a post-resume replay.
@@ -439,8 +476,7 @@ async fn redirect_chain_of_three_replays_all_hops_on_resume() {
     );
 
     manager.resume(id).expect("resume should succeed");
-    let done =
-        wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
+    let done = wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
     assert!(done, "resume did not complete");
 
     let out_path = tmp.join("chain.bin");

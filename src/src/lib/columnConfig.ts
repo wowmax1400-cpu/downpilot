@@ -12,12 +12,14 @@ export type ColumnId =
   | "status"
   | "time_left"
   | "speed"
+  | "speed_graph"
   | "downloaded"
   | "progress"
   | "avg_speed"
   | "connections"
   | "category"
   | "queue"
+  | "last_try"
   | "added"
   | "save_to"
   | "description";
@@ -38,23 +40,29 @@ export interface ColumnDef {
 }
 
 export const COLUMNS: ColumnDef[] = [
-  { id: "name",        label: "Name",        defaultWidth: 280, minWidth: 140 },
+  { id: "name",        label: "File Name",   defaultWidth: 280, minWidth: 140 },
   { id: "size",        label: "Size",        right: true,  defaultWidth: 88,  minWidth: 60 },
-  { id: "status",      label: "Status",      right: true,  defaultWidth: 92,  minWidth: 72 },
+  { id: "status",      label: "Status",      right: true,  defaultWidth: 150, minWidth: 96 },
   { id: "time_left",   label: "Time Left",   right: true,  defaultWidth: 80,  minWidth: 64 },
   { id: "speed",       label: "Speed",       right: true,  defaultWidth: 92,  minWidth: 64 },
-  { id: "downloaded",  label: "Done",        right: true,  defaultWidth: 60,  minWidth: 56 },
-  { id: "progress",    label: "Progress",                   defaultWidth: 160, minWidth: 100 },
+  { id: "progress",    label: "Progress",                   defaultWidth: 160, minWidth: 100, defaultVisible: false },
+  { id: "last_try",    label: "Last Try",    right: true,  defaultWidth: 132, minWidth: 96 },
+  { id: "queue",       label: "Queue Name",                 defaultWidth: 120, minWidth: 80 },
+  { id: "speed_graph", label: "Graph",                      defaultWidth: 96,  minWidth: 64, defaultVisible: false },
+  { id: "downloaded",  label: "Done",        right: true,  defaultWidth: 72,  minWidth: 60, defaultVisible: false },
   { id: "avg_speed",   label: "Avg Speed",   right: true,  defaultWidth: 92,  minWidth: 72, defaultVisible: false },
   { id: "connections", label: "Conn",        right: true,  defaultWidth: 60,  minWidth: 48, defaultVisible: false },
   { id: "category",    label: "Category",                   defaultWidth: 100, minWidth: 80, defaultVisible: false },
-  { id: "queue",       label: "Queue",                      defaultWidth: 100, minWidth: 80, defaultVisible: false },
   { id: "added",       label: "Added",       right: true,  defaultWidth: 88,  minWidth: 72, defaultVisible: false },
-  { id: "save_to",     label: "Save To",                   defaultWidth: 200, minWidth: 120, defaultVisible: false },
-  { id: "description", label: "Description",               defaultWidth: 200, minWidth: 100, defaultVisible: false },
+  { id: "save_to",     label: "Save To",                    defaultWidth: 200, minWidth: 120, defaultVisible: false },
+  { id: "description", label: "Description",                defaultWidth: 200, minWidth: 100, defaultVisible: false },
 ];
 
-const STORAGE_KEY = "downpilot.columns.v1";
+// v4: IDM strict grid (File Name / Size / Status / Time Left / Speed /
+// Last Try / Queue Name / Progress). Last Try + Queue Name are
+// default-visible per spec. Bumped so persisted v3 layouts don't mask
+// the new defaults on existing installs.
+const STORAGE_KEY = "downpilot.columns.v4";
 
 export interface ColumnConfig {
   /** Ordered list of visible column ids. */
@@ -163,6 +171,27 @@ export function useColumnConfig() {
 
   const reset = useCallback(() => setCfg(defaults()), []);
 
+  /** Apply a named view preset. Replaces the entire column config
+   *  (order, visibility, widths) with the preset's values. The preset
+   *  is then persisted automatically by the effect above. */
+  const applyPreset = useCallback((name: string) => {
+    const preset = VIEW_PRESETS.find((p) => p.name === name);
+    if (!preset) return;
+    const order: ColumnId[] = [];
+    const visibility: Record<string, boolean> = {};
+    const widths: Record<string, number> = {};
+    for (const c of COLUMNS) {
+      const visible = preset.columns.includes(c.id);
+      visibility[c.id] = visible;
+      if (visible) order.push(c.id);
+      // Reset widths to defaults so the user can resize from a known
+      // starting point (avoids carrying over their custom widths from
+      // a previous preset).
+      widths[c.id] = c.defaultWidth;
+    }
+    setCfg({ order, visibility, widths });
+  }, []);
+
   /** Build a CSS grid template string for the visible columns, in order. */
   const gridTemplate = cfg.order
     .filter((id) => cfg.visibility[id])
@@ -172,5 +201,63 @@ export function useColumnConfig() {
     })
     .join(" ");
 
-  return { cfg, setWidth, toggle, move, reset, gridTemplate };
+  return { cfg, setWidth, toggle, move, reset, applyPreset, gridTemplate };
 }
+
+/// Named view presets. The spec calls out three: Compact (essential
+/// columns only), Detailed (a richer view for everyday use), and Power
+/// User (everything visible). Users can still resize, reorder, and
+/// hide individual columns on top of a preset.
+export interface ViewPreset {
+  name: string;
+  label: string;
+  description: string;
+  columns: ColumnId[];
+}
+
+export const VIEW_PRESETS: ViewPreset[] = [
+  {
+    name: "compact",
+    label: "Compact",
+    description: "Name / Status / Size / Speed / ETA",
+    columns: ["name", "size", "status", "speed", "time_left"],
+  },
+  {
+    name: "detailed",
+    label: "Detailed",
+    description: "Adds progress, connections, category, and queue",
+    columns: [
+      "name",
+      "size",
+      "status",
+      "time_left",
+      "speed",
+      "downloaded",
+      "connections",
+      "category",
+      "queue",
+    ],
+  },
+  {
+    name: "power",
+    label: "Power User",
+    description: "Every available useful column",
+    columns: [
+      "name",
+      "size",
+      "status",
+      "time_left",
+      "speed",
+      "downloaded",
+      "progress",
+      "avg_speed",
+      "speed_graph",
+      "connections",
+      "category",
+      "queue",
+      "added",
+      "save_to",
+      "description",
+    ],
+  },
+];

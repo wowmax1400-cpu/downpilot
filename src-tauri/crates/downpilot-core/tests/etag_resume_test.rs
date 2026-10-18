@@ -21,12 +21,12 @@
 //!   resume Range request should be honoured with 206 Partial Content and
 //!   the final file should match the original.
 //!
-//! IMPORTANT: The downpilot engine on `main` does NOT implement `If-Range`.
-//! It never sends the header and accepts both 206 and 200 as a successful
-//! range body, so a server returning 200 (file changed) on a resume will
-//! silently produce a corrupt file. Test 1 is therefore gated behind
-//! `#[ignore]` to document the missing behaviour without making CI red.
-//! Test 2 documents what already works.
+//! Test 1 (`etag_mismatch_on_resume_detects_change`) and Test 2
+//! (`etag_match_on_resume_serves_206`) are both active and passing: the
+//! engine implements `If-Range` in `run_single` and `run_chunked`
+//! (download.rs) and treats a validator-mismatch 200 as "restart from
+//! the beginning". Earlier drafts of this file claimed `If-Range` was
+//! missing on `main`; that comment was stale.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -128,7 +128,9 @@ async fn spawn_etag_server_with(policy: IfRangePolicy) -> EtagServer {
 
     tokio::spawn(async move {
         loop {
-            let Ok((mut stream, _)) = listener.accept().await else { continue };
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
             let resources = Arc::clone(&resources_for_server);
             let rh = Arc::clone(&rh);
             let fb = Arc::clone(&fb);
@@ -149,11 +151,7 @@ async fn spawn_etag_server_with(policy: IfRangePolicy) -> EtagServer {
 }
 
 fn url_for(server: &EtagServer, path: &str) -> String {
-    format!(
-        "http://{}/{}",
-        server.addr,
-        path.trim_start_matches('/')
-    )
+    format!("http://{}/{}", server.addr, path.trim_start_matches('/'))
 }
 
 /// Stream `data` in `chunk` byte pieces, sleeping `sleep_us` µs between
@@ -363,6 +361,7 @@ fn new_download(url: &str, filename: &str, save_dir: &str, threads: u32) -> NewD
         start_immediately: true,
         browser_dedup_id: String::new(),
         skip_probe: false,
+        mirrors: Vec::new(),
     }
 }
 
@@ -374,7 +373,10 @@ async fn wait_for_status(
 ) -> bool {
     tokio::time::timeout(timeout, async {
         while let Some(ev) = sink_rx.recv().await {
-            if let EngineEvent::StatusChanged { id: eid, status, .. } = ev {
+            if let EngineEvent::StatusChanged {
+                id: eid, status, ..
+            } = ev
+            {
                 if eid == id && status == want {
                     return true;
                 }
@@ -407,24 +409,33 @@ async fn etag_match_on_resume_serves_206() {
         .expect("add should succeed");
 
     // Give the chunked download a moment to make real progress.
-    let _ = wait_for_status(&mut sink_rx, id, Status::Downloading, Duration::from_secs(5)).await;
+    let _ = wait_for_status(
+        &mut sink_rx,
+        id,
+        Status::Downloading,
+        Duration::from_secs(5),
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    manager.pause(id).expect("pause should work while downloading");
+    manager
+        .pause(id)
+        .expect("pause should work while downloading");
 
-    let paused =
-        wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
+    let paused = wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
     assert!(paused, "task did not pause");
 
     // Resume — server still returns ETag "v1", so 206 must be served.
     manager.resume(id).expect("resume should succeed");
-    let done =
-        wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
+    let done = wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
     assert!(done, "resume did not complete");
 
     let out_path = tmp.join("etag.bin");
     let got = std::fs::read(&out_path).expect("output file should exist");
     assert_eq!(got.len(), server.expected.len(), "file size mismatch");
-    assert_eq!(got, server.expected, "resumed content does not match original");
+    assert_eq!(
+        got, server.expected,
+        "resumed content does not match original"
+    );
 
     let honoured = server.range_honoured.load(Ordering::Relaxed);
     let full = server.full_body_sent.load(Ordering::Relaxed);
@@ -458,7 +469,6 @@ async fn etag_match_on_resume_serves_206() {
 /// `#[ignore]` once If-Range (or an equivalent restart-on-mismatch path)
 /// lands.
 #[tokio::test]
-#[ignore = "engine does not currently detect ETag mismatch on resume — see https://github.com/downpilot/downpilot/issues (If-Range)"]
 async fn etag_mismatch_on_resume_detects_change() {
     let server = spawn_etag_server_with(IfRangePolicy::Strict).await;
     let url = url_for(&server, "etag.bin");
@@ -469,12 +479,19 @@ async fn etag_mismatch_on_resume_detects_change() {
         .await
         .expect("add should succeed");
 
-    let _ = wait_for_status(&mut sink_rx, id, Status::Downloading, Duration::from_secs(5)).await;
+    let _ = wait_for_status(
+        &mut sink_rx,
+        id,
+        Status::Downloading,
+        Duration::from_secs(5),
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    manager.pause(id).expect("pause should work while downloading");
+    manager
+        .pause(id)
+        .expect("pause should work while downloading");
 
-    let paused =
-        wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
+    let paused = wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
     assert!(paused, "task did not pause");
 
     // Simulate the remote file being replaced: new ETag, new content.
@@ -494,8 +511,7 @@ async fn etag_mismatch_on_resume_detects_change() {
     // identical to the new content. Without it, the engine will append
     // the new full body to the old partial and the file will be corrupt.
     manager.resume(id).expect("resume should succeed");
-    let done =
-        wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
+    let done = wait_for_status(&mut sink_rx, id, Status::Completed, Duration::from_secs(30)).await;
     assert!(done, "resume did not complete");
 
     let out_path = tmp.join("etag.bin");

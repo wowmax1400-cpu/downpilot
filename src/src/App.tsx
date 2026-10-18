@@ -15,6 +15,7 @@ import { StatusBar } from "./components/StatusBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { AddDownloadDialog } from "./components/AddDownloadDialog";
 import { PropertiesDialog } from "./components/PropertiesDialog";
+import { IDMSegmentsDialog } from "./components/SegmentsModal";
 import { SiteGrabberDialog } from "./components/SiteGrabberDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SchedulerPanel } from "./components/SchedulerPanel";
@@ -59,10 +60,27 @@ export default function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [propsId, setPropsId] = useState<number | null>(null);
+  /** IDM-style per-segment progress window (double-click a running row). */
+  const [segmentsId, setSegmentsId] = useState<number | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(() => {
+    try {
+      return localStorage.getItem("downpilot.details.open") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [ctx, setCtx] = useState<{ x: number; y: number; ids: number[] } | null>(
     null
   );
   const [dragHover, setDragHover] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("downpilot.details.open", String(detailsOpen));
+    } catch {
+      // Ignore unavailable storage in private/browser mode.
+    }
+  }, [detailsOpen]);
 
   const onSelect = useCallback(
     (id: number, ev: React.MouseEvent) => {
@@ -83,13 +101,16 @@ export default function App() {
     [store.selected]
   );
 
-  /** Double-click on a row: Properties for active, Open File for done. */
+  /** Double-click on a row: Open File for done, IDM-style segment
+   *  window for a transfer in flight, Properties for everything else. */
   const onRowActivate = useCallback(
     (id: number) => {
       const t = store.tasks.find((x) => x.id === id);
       if (!t) return;
       if (t.status === "completed") {
         void store.openFile(t);
+      } else if (t.status === "downloading") {
+        setSegmentsId(id);
       } else {
         setPropsId(id);
       }
@@ -283,23 +304,8 @@ export default function App() {
         case "start":
           store.bulk((id) => store.resume(id));
           break;
-        case "startAll":
-          void store.resumeAll();
-          break;
-        case "retryFailed":
-          void store.retryAll();
-          break;
-        case "recheck":
-          store.bulk((id) => store.recheck(id));
-          break;
         case "pause":
           store.bulk((id) => store.pause(id));
-          break;
-        case "stop":
-          store.bulk((id) => store.cancel(id));
-          break;
-        case "forceStart":
-          store.bulk((id) => store.forceStart(id));
           break;
         case "delete":
           store.bulk((id) => store.remove(id));
@@ -307,19 +313,11 @@ export default function App() {
         case "stopAll":
           void store.stopAll();
           break;
-        case "deleteAll":
-          if (window.confirm(t("confirm.deleteAllCompleted"))) {
-            void store.clearFinished();
-          }
-          break;
         case "options":
           setOptionsOpen(true);
           break;
         case "scheduler":
           setSchedulerOpen(true);
-          break;
-        case "queues":
-          setQueuesOpen(true);
           break;
       }
     },
@@ -350,6 +348,8 @@ export default function App() {
           const id = Array.from(store.selected)[0];
           if (id !== undefined) setPropsId(id);
         }}
+        detailsOpen={detailsOpen}
+        onToggleDetails={() => setDetailsOpen((open) => !open)}
       />
       <Toolbar store={store} onAction={handleToolbar} />
       <div className="flex min-h-0 flex-1">
@@ -363,7 +363,36 @@ export default function App() {
           effectiveSpeed={(q: string) => store.effectiveSpeed[q] ?? 0}
           activeProfiles={store.activeProfiles}
         />
-        <main className="min-w-0 flex-1 overflow-auto">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--table-bg)]">
+          <div className="flex h-9 shrink-0 items-center gap-3 border-b border-[var(--chrome-line)] bg-[var(--chrome)] px-3 text-xs text-txt-dim">
+            <span className="font-medium text-txt">Downloads</span>
+            <span>{store.filtered.length} result{store.filtered.length === 1 ? "" : "s"}</span>
+            {store.search && <span className="truncate text-gray-500">for “{store.search}”</span>}
+            <div className="flex-1" />
+            <label className="flex items-center gap-2">
+              <span className="sr-only">Filter downloads by status</span>
+              <select
+                aria-label="Filter downloads by status"
+                className="h-6 rounded-[2px] border border-white/10 bg-surface-2 px-2 text-xs text-txt-dim outline-none focus:border-[var(--accent)]"
+                value={store.sidebarKey.kind === "status" ? String(store.sidebarKey.value) : "all"}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "all") {
+                    store.setSidebarKey({ kind: "all" });
+                  } else if (value === "unfinished" || value === "paused" || value === "finished" || value === "failed") {
+                    store.setSidebarKey({ kind: "status", value });
+                  }
+                }}
+              >
+                <option value="all">All statuses</option>
+                <option value="unfinished">Active</option>
+                <option value="paused">Paused</option>
+                <option value="finished">Finished</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
           <DownloadTable
             tasks={store.tasks}
             grouped={store.grouped}
@@ -371,6 +400,16 @@ export default function App() {
             sort={store.sort}
             onSortChange={store.setSort}
             onSelect={onSelect}
+            onRetry={(id) => store.redownload(id)}
+            onToggleAll={() => {
+              const ids = store.filtered.map((task) => task.id);
+              if (ids.length > 0 && ids.every((id) => store.selected.has(id))) {
+                store.clearSelection();
+              } else if (ids.length > 0) {
+                store.selectOnly(ids[0]);
+                for (const id of ids.slice(1)) store.toggleSelect(id);
+              }
+            }}
             onContextMenu={onRowContext}
             onRowActivate={onRowActivate}
             groupBy={store.groupBy}
@@ -378,16 +417,20 @@ export default function App() {
             sidebarKey={store.sidebarKey}
             search={store.search}
           />
+          </div>
        </main>
         {/* Phase 3A: mount DetailsPanel for the selected download. Was
             imported-but-dead; now lives to the right of the table
             and shows quick info (filename, size, status, speed, ETA,
             category, queue, source, destination) without forcing the
             user to open the full Properties dialog. */}
-        <DetailsPanel
-          store={store}
-          onOpenProps={(id) => setPropsId(id)}
-        />
+        {detailsOpen && (
+          <DetailsPanel
+            store={store}
+            onOpenProps={(id) => setPropsId(id)}
+            onClose={() => setDetailsOpen(false)}
+          />
+        )}
       </div>
       <StatusBar store={store} />
 
@@ -463,6 +506,13 @@ export default function App() {
       {queuesOpen && <QueuesPanel store={store} onClose={() => setQueuesOpen(false)} />}
       {historyOpen && <HistoryPanel store={store} onClose={() => setHistoryOpen(false)} />}
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+      {segmentsId !== null && (
+        <IDMSegmentsDialog
+          store={store}
+          id={segmentsId}
+          onClose={() => setSegmentsId(null)}
+        />
+      )}
       {propsId !== null && (
         <PropertiesDialog store={store} id={propsId} onClose={() => setPropsId(null)} />
       )}

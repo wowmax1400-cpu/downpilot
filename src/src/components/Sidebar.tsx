@@ -1,8 +1,23 @@
-// Modern dark sidebar: clean muted navigation with indigo accent on active.
-// Categories (built-in + user), Grabber (sites), Queues. No boxes, no tree
-// chevrons — just a quiet vertical nav.
+// IDM-style expandable category TREE (spec 2):
+//
+//   ▼ 📁 All Downloads (n)
+//        ├─ 📦 Compressed (n)
+//        ├─ 📄 Documents (n)
+//        ├─ 🎵 Music (n)
+//        ├─ ⚙️ Programs (n)
+//        └─ 🎬 Videos (n)
+//   ▼ ⏱ Queues
+//        ├─ 🟢 Main Download Queue (n)
+//        └─ 🕒 Synchronization Queue (n)
+//   ▼ ❓ Unfinished (n)
+//
+// Sections collapse via their chevron; every row carries a
+// right-aligned counter badge. Category rows reuse the table's
+// `fileIconFor` glyphs so a .zip looks like a .zip everywhere. Queue
+// rows show a glowing green dot while they have active transfers and a
+// clock when idle — the 🟢/🕒 of the spec.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Category, DownloadQueue, SidebarKey } from "../types";
 import { fileIconFor } from "./icons";
 
@@ -19,72 +34,64 @@ interface SidebarProps {
   activeProfiles: { affected_queues: string[] }[];
 }
 
-interface NavItem {
-  key: SidebarKey;
-  label: string;
-  countKey: string;
-  icon: React.ReactNode;
-}
-
 const iconWrap = (children: React.ReactNode) => (
-  <span className="mr-2 inline-flex h-4 w-4 shrink-0 items-center justify-center">
+  <span className="mr-1.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
     {children}
   </span>
 );
 
-function StatusIcon({ status }: { status: string }) {
-  const c = "h-3.5 w-3.5";
-  switch (status) {
-    case "all":
-      return (
-        <svg viewBox="0 0 16 16" className={c} fill="none" stroke="currentColor" strokeWidth="1.5">
-          <rect x="2" y="3" width="12" height="2.5" rx="0.5" />
-          <rect x="2" y="6.75" width="12" height="2.5" rx="0.5" />
-          <rect x="2" y="10.5" width="12" height="2.5" rx="0.5" />
-        </svg>
-      );
-    case "unfinished":
-      return (
-        <svg viewBox="0 0 16 16" className={c} fill="none" stroke="currentColor" strokeWidth="1.5">
-          <circle cx="8" cy="8" r="5.5" />
-          <path d="M8 5v3.2l2 1.2" />
-        </svg>
-      );
-    case "finished":
-      return (
-        <svg viewBox="0 0 16 16" className={c} fill="none" stroke="currentColor" strokeWidth="1.8">
-          <path d="M3.5 8.5l3 3 6-6.5" />
-        </svg>
-      );
-    case "paused":
-      return (
-        <svg viewBox="0 0 16 16" className={c} fill="currentColor">
-          <rect x="4.5" y="3" width="2.5" height="10" rx="0.4" />
-          <rect x="9" y="3" width="2.5" height="10" rx="0.4" />
-        </svg>
-      );
-    case "failed":
-      return (
-        <svg viewBox="0 0 16 16" className={c} fill="none" stroke="currentColor" strokeWidth="1.5">
-          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
-        </svg>
-      );
-    case "grabber":
-      return (
-        <svg viewBox="0 0 16 16" className={c} fill="none" stroke="currentColor" strokeWidth="1.5">
-          <circle cx="7" cy="7" r="4" />
-          <path d="M10 10l3 3" />
-        </svg>
-      );
-    default:
-      return null;
-  }
-}
+/** Representative filename per category so the shared `fileIconFor`
+ *  resolver yields the right glyph (it keys mostly off the extension). */
+const CATEGORY_PROBE: Record<string, string> = {
+  all: "folder",
+  compressed: "archive.zip",
+  documents: "file.pdf",
+  music: "track.flac",
+  video: "clip.mp4",
+  programs: "pkg.AppImage",
+  images: "image.png",
+  other: "file",
+  unfinished: "partial.download",
+};
 
 function CategoryIcon({ name, category }: { name: string; category: string }) {
-  const iconResult = fileIconFor(name, category);
+  const probe = CATEGORY_PROBE[category] ?? name;
+  const iconResult = fileIconFor(probe, category);
   const Comp = iconResult.Icon;
   return <Comp size={14} className={iconResult.color} />;
+}
+
+/** IDM's own ordering, so the tree doesn't reorder itself when the
+ *  engine adds a category. Unknown categories fall to the end. */
+const IDM_CATEGORY_ORDER = [
+  "compressed",
+  "documents",
+  "music",
+  "programs",
+  "video",
+  "images",
+  "other",
+];
+
+/** IDM label mapping for the queue tree rows. */
+function queueLabel(name: string, label?: string): string {
+  if (name === "general") return "Main Download Queue";
+  if (name === "synchronization") return "Synchronization Queue";
+  return label || name;
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90 text-txt-dim" : "text-txt-faint"}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M6 4l4.5 4L6 12" />
+    </svg>
+  );
 }
 
 export function Sidebar({
@@ -97,32 +104,44 @@ export function Sidebar({
   effectiveSpeed,
   activeProfiles,
 }: SidebarProps) {
+  // Collapsible tree sections — all expanded by default (IDM ships the
+  // tree expanded; the chevron collapses a whole branch).
+  const [open, setOpen] = useState<Record<string, boolean>>({
+    categories: true,
+    queues: true,
+    unfinished: true,
+  });
+  const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
+
   const queueStats = useMemo(() => {
     const map: Record<string, { active: number; queued: number; total: number }> = {};
     for (const q of queues) {
-      map[q.name] = { active: 0, queued: 0, total: 0 };
+      map[q.name] = map[q.name] ?? { active: 0, queued: 0, total: 0 };
     }
     for (const t of tasks) {
-      const slot = map[t.queue];
-      if (!slot) continue;
+      const slot = map[t.queue] ?? (map[t.queue] = { active: 0, queued: 0, total: 0 });
       slot.total += 1;
       if (t.status === "downloading") slot.active += 1;
       else if (t.status === "queued" || t.status === "scheduled") slot.queued += 1;
     }
     return map;
   }, [queues, tasks]);
-  const overriddenQueues = useMemo(() => {
-    const s = new Set<string>();
-    for (const p of activeProfiles) for (const q of p.affected_queues) s.add(q);
-    return s;
-  }, [activeProfiles]);
-  const builtIn: NavItem[] = [
-    { key: { kind: "all" }, label: "All Downloads", countKey: "all", icon: <StatusIcon status="all" /> },
-    { key: { kind: "status", value: "unfinished" }, label: "Unfinished", countKey: "unfinished", icon: <StatusIcon status="unfinished" /> },
-    { key: { kind: "status", value: "finished" }, label: "Finished", countKey: "finished", icon: <StatusIcon status="finished" /> },
-    { key: { kind: "status", value: "paused" }, label: "Paused", countKey: "paused", icon: <StatusIcon status="paused" /> },
-    { key: { kind: "status", value: "failed" }, label: "Errors", countKey: "failed", icon: <StatusIcon status="failed" /> },
-  ];
+
+  void effectiveSpeed;
+  void activeProfiles;
+
+  const orderedCategories = useMemo(() => {
+    const rank = (name: string) => {
+      const i = IDM_CATEGORY_ORDER.indexOf(name);
+      return i === -1 ? IDM_CATEGORY_ORDER.length : i;
+    };
+    return [...categories].sort((a, b) => {
+      const ra = rank(a.name);
+      const rb = rank(b.name);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    });
+  }, [categories]);
 
   const isActive = (k: SidebarKey) => {
     if (k.kind !== active.kind) return false;
@@ -135,18 +154,34 @@ export function Sidebar({
     return false;
   };
 
-  const NavButton = ({
+/** Section header: small disclosure triangle + tiny caps title,
+ *  collapses the branch (Windows Explorer / IDM tree pane, rule 3). */
+  const SectionHeader = ({ id, title }: { id: string; title: string }) => (
+    <button
+      type="button"
+      onClick={() => toggle(id)}
+      className="flex w-full items-center gap-1 rounded-none px-1 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-gray-500 hover:bg-[var(--row-hover)] hover:text-gray-300"
+    >
+      <Chevron open={!!open[id]} />
+      {title}
+    </button>
+  );
+
+  /** One selectable tree row: depth indent, icon, label, right counter. */
+  const TreeRow = ({
     k,
     label,
     count,
     icon,
     title,
+    depth = 0,
   }: {
     k: SidebarKey;
     label: string;
     count?: number;
     icon: React.ReactNode;
     title?: string;
+    depth?: number;
   }) => {
     const activeHere = isActive(k);
     return (
@@ -155,19 +190,20 @@ export function Sidebar({
         onClick={() => onSelect(k)}
         title={title}
         className={
-          "group flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-sm transition-colors " +
+          "flex w-full items-center rounded-none py-[3px] pr-1.5 text-left text-xs transition-colors " +
           (activeHere
-            ? "bg-indigo-500/10 text-indigo-400"
-            : "text-txt-dim hover:bg-white/5 hover:text-txt")
+            ? "bg-accent-soft text-accent"
+            : "text-txt-dim hover:bg-[var(--row-hover)] hover:text-txt")
         }
+        style={{ paddingLeft: `${6 + depth * 14}px` }}
       >
         {iconWrap(icon)}
         <span className="flex-1 truncate">{label}</span>
         {typeof count === "number" && (
           <span
             className={
-              "ml-2 inline-flex min-w-[1.5rem] justify-end font-mono text-[11px] tabular-nums " +
-              (activeHere ? "text-indigo-400/80" : "text-txt-faint")
+              "ml-2 inline-flex min-w-[1.25rem] justify-end font-mono text-[10.5px] tabular-nums " +
+              (activeHere ? "text-accent" : "text-txt-faint")
             }
           >
             {count}
@@ -178,106 +214,91 @@ export function Sidebar({
   };
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-white/5 bg-surface">
-      {/* Categories */}
-      <div className="flex flex-col gap-0.5 p-2">
-        <div className="px-2 pb-1 pt-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-txt-faint">
-          Categories
-        </div>
-        {builtIn.map((it) => (
-          <NavButton
-            key={"bi-" + it.countKey}
-            k={it.key}
-            label={it.label}
-            count={counts[it.countKey] ?? 0}
-            icon={it.icon}
-          />
-        ))}
-        {categories.map((c) => (
-          <NavButton
-            key={"cat-" + c.name}
-            k={{ kind: "category", value: c.name }}
-            label={c.label || c.name}
-            count={counts[`cat:${c.name}`] ?? 0}
-            icon={<CategoryIcon name={c.name} category={c.name} />}
-            title={
-              c.save_dir
-                ? `${c.label || c.name} → ${c.save_dir}`
-                : c.label || c.name
-            }
-          />
-        ))}
-      </div>
-
-      {/* Grabber */}
-      <div className="flex flex-col gap-0.5 border-t border-white/5 p-2">
-        <div className="px-2 pb-1 pt-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-txt-faint">
-          Grabber
-        </div>
-        <NavButton
-          k={{ kind: "site", value: "_grabber" }}
-          label="Site Grabber"
-          count={counts["grabber"] ?? 0}
-          icon={<StatusIcon status="grabber" />}
-        />
-      </div>
-
-      {/* Queues */}
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-t border-white/5 p-2">
-        <div className="px-2 pb-1 pt-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-txt-faint">
-          Queues
-        </div>
-        {queues.length === 0 ? (
-          <div className="px-2 py-1 text-xs text-txt-faint">No queues yet</div>
-        ) : (
-          queues.map((q) => {
-            const s = queueStats[q.name] ?? { active: 0, queued: 0, total: 0 };
-            const eff = effectiveSpeed(q.name);
-            const overridden = overriddenQueues.has(q.name);
-            const cap = q.speed_limit_kbps;
-            const capLabel = cap === 0 ? "∞" : cap >= 1024 ? Math.round(cap / 1024) + " MB/s" : cap + " kB/s";
-            const effLabel = eff === 0 ? "∞" : eff >= 1024 ? Math.round(eff / 1024) + " MB/s" : eff + " kB/s";
-            const isActive = active.kind === "queue" && active.value === q.name;
-            return (
-              <button
-                key={"q-" + q.name}
-                onClick={() => onSelect({ kind: "queue", value: q.name })}
-                className={
-                  "group flex w-full items-start gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition-colors " +
-                  (isActive
-                    ? "bg-indigo-500/15 text-txt"
-                    : "text-txt-dim hover:bg-white/[0.04] hover:text-txt")
+    <aside className="flex w-[188px] shrink-0 flex-col overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)]">
+      {/* ▼ 📁 All Downloads + nested file-type categories */}
+        <div className="flex flex-col gap-0 px-1.5 pb-0.5">
+        <SectionHeader id="categories" title="Categories" />
+        {open.categories && (
+          <>
+            <TreeRow
+              k={{ kind: "all" }}
+              label="All Downloads"
+              count={counts["all"] ?? 0}
+              icon={
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-sky-300" fill="none" stroke="currentColor" strokeWidth="1.4">
+                  <path d="M1.5 4.5A1.5 1.5 0 013 3h3l1.5 1.5H13A1.5 1.5 0 0114.5 6v6A1.5 1.5 0 0113 13.5H3A1.5 1.5 0 011.5 12V4.5z" />
+                </svg>
+              }
+            />
+            {orderedCategories.map((c) => (
+              <TreeRow
+                key={"cat-" + c.name}
+                k={{ kind: "category", value: c.name }}
+                label={c.label || c.name}
+                count={counts[`cat:${c.name}`] ?? 0}
+                depth={1}
+                icon={<CategoryIcon name={c.name} category={c.name} />}
+                title={
+                  (c.save_dir ? `${c.label || c.name} → ${c.save_dir}` : c.label || c.name) +
+                  (c.extensions ? `  (${c.extensions})` : "")
                 }
-              >
-                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center">
-                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M2 4h12M2 8h12M2 12h8" />
+              />
+            ))}
+          </>
+        )}
+      </div>
+
+      {/* ▼ ⏱ Queues */}
+      <div className="flex flex-col gap-0 px-1.5 pb-0.5">
+        <SectionHeader id="queues" title="Queues" />
+        {open.queues &&
+          (queues.length === 0 ? (
+            <div className="py-1 pl-7 text-xs text-txt-faint">No queues yet</div>
+          ) : (
+            queues.map((q) => {
+              const s = queueStats[q.name] ?? { active: 0, queued: 0, total: 0 };
+              const label = queueLabel(q.name, q.label);
+              // 🟢 while the queue has live transfers, 🕒 when idle.
+              const dot =
+                s.active > 0 ? (
+                  <span className="inline-block h-1.5 w-1.5 rounded-[1px] bg-emerald-500" />
+                ) : (
+                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-txt-faint" fill="none" stroke="currentColor" strokeWidth="1.4">
+                    <circle cx="8" cy="8" r="6" />
+                    <path d="M8 4.5V8l2.5 1.5" />
                   </svg>
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="truncate">{q.label || q.name}</span>
-                    <span className="shrink-0 text-[10.5px] tabular-nums text-txt-faint">
-                      {s.active}/{q.max_simultaneous}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-1.5 text-[10.5px] text-txt-faint">
-                    {s.active > 0 && (
-                      <span title="active" className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/90" />
-                    )}
-                    <span className="tabular-nums">{s.queued} queued</span>
-                    <span>·</span>
-                    <span className="tabular-nums" title={overridden ? "Schedule override active" : "Configured cap"}>
-                      {overridden ? "⚡ " : ""}{capLabel}
-                    </span>
-                    {overridden && eff !== cap && (
-                      <span className="tabular-nums text-amber-300/80">→ {effLabel}</span>
-                    )}
-                  </span>
-                </span>
-              </button>
-            );
-          })
+                );
+              return (
+                <TreeRow
+                  key={"q-" + q.name}
+                  k={{ kind: "queue", value: q.name }}
+                  label={label}
+                  count={s.total}
+                  depth={1}
+                  icon={dot}
+                  title={`${label} · ${s.active} active / ${q.max_simultaneous} max · ${s.queued} queued`}
+                />
+              );
+            })
+          ))}
+      </div>
+
+      {/* ▼ ❓ Unfinished */}
+      <div className="flex flex-col gap-0 px-1.5 pb-1">
+        <SectionHeader id="unfinished" title="Unfinished" />
+        {open.unfinished && (
+          <TreeRow
+            k={{ kind: "status", value: "unfinished" }}
+            label="Unfinished"
+            count={counts["unfinished"] ?? 0}
+            icon={
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-amber-300/90" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <circle cx="8" cy="8" r="6" />
+                <path d="M6.2 6.2a1.9 1.9 0 113.1 1.4c-.6.45-1.3.75-1.3 1.6M8 11.5v.02" />
+              </svg>
+            }
+            title="Downloads that have not finished yet (any non-complete state)"
+          />
         )}
       </div>
     </aside>

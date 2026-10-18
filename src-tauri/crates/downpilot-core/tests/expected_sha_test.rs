@@ -37,6 +37,7 @@ fn nd(url: &str) -> NewDownload {
         start_immediately: false,
         browser_dedup_id: String::new(),
         skip_probe: false,
+        mirrors: Vec::new(),
     }
 }
 

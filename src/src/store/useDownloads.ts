@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../lib/api";
 import { domainOf } from "../lib/format";
+import { computeSpeedBps } from "../lib/metrics";
 import type {
   ActiveProfile,
   AppSettings,
@@ -35,6 +36,14 @@ const STATUS_RANK: Record<string, number> = {
 };
 
 const EMPTY_SAMPLES: number[] = Object.freeze([]) as unknown as number[];
+
+export interface SegmentSnapshot {
+  idx: number;
+  bytes: number;
+  size: number;
+}
+
+const EMPTY_SEGMENTS: SegmentSnapshot[] = Object.freeze([]) as unknown as SegmentSnapshot[];
 
 function sideMatch(t: DownloadTask, key: SidebarKey): boolean {
   switch (key.kind) {
@@ -89,6 +98,8 @@ function sortValue(t: DownloadTask, f: SortField): number | string {
       return t.completed_at ?? 0;
     case "save_dir":
       return t.save_dir;
+    case "last_try":
+      return t.last_resumed_at ?? t.started_at ?? t.updated_at;
   }
 }
 
@@ -126,6 +137,9 @@ export function useDownloads() {
   // memory bounded across hundreds of concurrent tasks.
   const SPEED_HISTORY_CAP = 120;
   const speedHistoryRef = useRef<Map<number, number[]>>(new Map());
+  // Byte baseline per task for the CURRENT sampling window (bytes already
+  // downloaded when the window opened). Reset together with the ring.
+  const speedBaselineRef = useRef<Map<number, number>>(new Map());
   // Last time we recorded a sample for a given task — used to throttle
   // progress events (which can fire multiple times per second per chunk)
   // down to ~2 Hz so the graph renders smoothly.
@@ -135,6 +149,15 @@ export function useDownloads() {
   // Bump this once per ring-buffer write so the table can re-render only
   // the rows that show the graph (we re-render the whole table — fine,
   // a 200-row table re-renders in <2ms).
+
+  // Per-task segment progress for the IDM-style multi-segment dialog.
+  // taskId -> (chunkIndex -> {bytes, size}). Ephemeral: never persisted;
+  // dropped when a task is removed. A `segmentVersion` bump is the
+  // re-render trigger for the dialog (same pattern as speedHistory).
+  const segmentsRef = useRef<Map<number, Map<number, { bytes: number; size: number }>>>(
+    new Map()
+  );
+  const [segmentVersion, setSegmentVersion] = useState(0);
 
   const refresh = useCallback(async () => {
     const list = await api.listDownloads();
@@ -200,13 +223,21 @@ export function useDownloads() {
     if (kind === "status_changed" || kind === "finished") {
       const resetId: number | undefined = ev.id ?? ev.task?.id;
       if (resetId !== undefined) speedHistoryLastRef.current.delete(resetId);
+      // Fresh run: drop per-task segment snapshots so the dialog resets.
+      const segMap = segmentsRef.current.get(resetId ?? -1);
+      if (segMap) segMap.clear();
+      segmentsRef.current.delete(resetId ?? -1);
+      setSegmentVersion((v) => v + 1);
     }
     if (kind === "removed") {
       tasksRef.current = tasksRef.current.filter((t) => t.id !== ev.id);
       // Free the ring buffer for removed tasks so the Map doesn't grow
       // without bound across a long session.
       speedHistoryRef.current.delete(ev.id);
+      speedBaselineRef.current.delete(ev.id);
       speedHistoryLastRef.current.delete(ev.id);
+      segmentsRef.current.delete(ev.id);
+      setSegmentVersion((v) => v + 1);
     } else if (kind === "added") {
       tasksRef.current = [normalizeTask(ev.task), ...tasksRef.current];
     } else if (kind === "status_changed") {
@@ -220,34 +251,64 @@ export function useDownloads() {
         t.id === ev.task.id ? normalizeTask(ev.task) : t
       );
     } else if (kind === "progress") {
+      // Per-task byte accounting for speed sampling. The first sample
+      // closes after a short 200 ms window (fast live feedback); after
+      // that the standard 500 ms cadence applies. Each sample is
+      // bytes-delta ÷ time-delta over its own window — real measured
+      // throughput, never a fabricated number (no samples ⇒ UI shows
+      // the "…" placeholder via computeSpeedBps returning 0).
+      const now = performance.now();
+      const last = speedHistoryLastRef.current.get(ev.id) ?? 0;
+      const elapsedMs = now - last;
+      const FAST_FIRST_SAMPLE_MS = 200;
+      const hasSamples = speedHistoryRef.current.has(ev.id);
+      const threshold = hasSamples ? SPEED_HISTORY_INTERVAL_MS : FAST_FIRST_SAMPLE_MS;
+      if (last === 0) {
+        // First progress event ever: record the byte baseline and arm the
+        // timestamp. Speed stays "…" until this window closes.
+        speedHistoryLastRef.current.set(ev.id, now);
+        speedBaselineRef.current.set(ev.id, ev.downloaded);
+      } else if (elapsedMs >= threshold) {
+        const base = speedBaselineRef.current.get(ev.id) ?? ev.downloaded;
+        const dBytes = Math.max(0, ev.downloaded - base);
+        speedHistoryLastRef.current.set(ev.id, now);
+        speedBaselineRef.current.set(ev.id, ev.downloaded);
+        const sample = dBytes / (elapsedMs / 1000);
+        const buf = speedHistoryRef.current.get(ev.id);
+        if (buf) {
+          buf.push(sample);
+          if (buf.length > SPEED_HISTORY_CAP) buf.shift();
+        } else {
+          speedHistoryRef.current.set(ev.id, [sample]);
+        }
+        setSpeedHistoryVersion((v) => v + 1);
+      }
+      const hist = speedHistoryRef.current.get(ev.id) ?? [];
+      const winSpeed = computeSpeedBps(hist);
       tasksRef.current = tasksRef.current.map((t) =>
         t.id === ev.id
           ? {
               ...t,
               downloaded: ev.downloaded,
               total_size: ev.total ?? t.total_size,
-              speed_bps: ev.speed_bps,
+              speed_bps: winSpeed,
             }
           : t
       );
-      // Throttle: only record a new sample at most every 500ms per task.
-      // The Rust side emits `EngineEvent::Progress` for every chunk
-      // write, which can be 10+ Hz per task on a fast link. Recording
-      // 2 Hz is plenty for a 60s window sparkline.
-      const now = performance.now();
-      const last = speedHistoryLastRef.current.get(ev.id) ?? 0;
-      if (now - last >= SPEED_HISTORY_INTERVAL_MS) {
-        speedHistoryLastRef.current.set(ev.id, now);
-        const buf = speedHistoryRef.current.get(ev.id);
-        if (buf) {
-          buf.push(ev.speed_bps);
-          if (buf.length > SPEED_HISTORY_CAP) buf.shift();
-        } else {
-          speedHistoryRef.current.set(ev.id, [ev.speed_bps]);
-        }
-        // Bump the version so the table re-renders. We keep this in a
-        // state so React tracks it; the actual data lives in the ref.
-        setSpeedHistoryVersion((v) => v + 1);
+    } else if (kind === "segment_progress") {
+      // IDM-style segment snapshot: (taskId, chunkIdx) -> bytes/size.
+      // Only bumps the version when something actually changed — the
+      // engine re-sends unchanged chunks on every 150ms tick, and a
+      // dialog re-render per tick would churn 16 bars needlessly.
+      let m = segmentsRef.current.get(ev.id);
+      if (!m) {
+        m = new Map();
+        segmentsRef.current.set(ev.id, m);
+      }
+      const cur = m.get(ev.idx);
+      if (!cur || cur.bytes !== ev.bytes || cur.size !== ev.size) {
+        m.set(ev.idx, { bytes: ev.bytes, size: ev.size });
+        setSegmentVersion((v) => v + 1);
       }
     }
     setTasks([...tasksRef.current]);
@@ -800,6 +861,10 @@ export function useDownloads() {
       if (t.status === "failed") c.failed = (c.failed ?? 0) + 1;
       if (t.status === "paused" || t.status === "stopped") c.paused = (c.paused ?? 0) + 1;
       if (t.status === "scheduled") c.scheduled = (c.scheduled ?? 0) + 1;
+      // Per-category badge counts. Sidebar renders `cat:<name>` for
+      // both built-in and user categories (extension-derived, i.e. the
+      // engine's guess_category output).
+      c[`cat:${t.category}`] = (c[`cat:${t.category}`] ?? 0) + 1;
     }
     return c;
   }, [tasks]);
@@ -819,7 +884,7 @@ export function useDownloads() {
     return { activeSpeed, activeCount, queuedCount, remaining };
   }, [tasks]);
 
-  const version = "1.0.0"; // read from backend if exposed
+  const version = "1.0.0"; // matches CARGO_PKG_VERSION (tauri.conf 1.0.0)
 
   return {
     tasks,
@@ -850,6 +915,17 @@ export function useDownloads() {
     getSpeedHistory: (id: number) =>
       speedHistoryRef.current.get(id) ?? EMPTY_SAMPLES,
     speedHistoryVersion,
+    // Reader for the IDM multi-segment dialog: taskId -> array of
+    // segment snapshots sorted by chunk index. Same contract as
+    // getSpeedHistory: stable reference, re-read on segmentVersion.
+    getSegments: (id: number): SegmentSnapshot[] => {
+      const m = segmentsRef.current.get(id);
+      if (!m || m.size === 0) return EMPTY_SEGMENTS;
+      return [...m.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([idx, s]) => ({ idx, bytes: s.bytes, size: s.size }));
+    },
+    segmentVersion,
     setSidebarKey,
     setSearch,
     setSort,
@@ -969,6 +1045,21 @@ function normalizeTask(t: Partial<DownloadTask> & { id: number }): DownloadTask 
     // Phase 3B defaults
     priority: t.priority ?? 0,
     force_started: t.force_started ?? false,
+    // Mirror/multi-source: Rust serializes `mirrors` as a JSON array
+    // (Vec<String>). The defensive branch tolerates a legacy string.
+    mirrors: Array.isArray(t.mirrors)
+      ? t.mirrors
+      : typeof t.mirrors === "string"
+        ? (() => {
+            try {
+              const v = JSON.parse(t.mirrors);
+              return Array.isArray(v) ? (v as string[]) : [];
+            } catch {
+              return [];
+            }
+          })()
+        : [],
+    mirror_index: t.mirror_index ?? 0,
   };
 }
 

@@ -19,9 +19,11 @@ import {
   formatSpeed,
   formatEta,
   formatDate,
+  formatDateTime,
   statusLabel,
   domainOf,
 } from "../lib/format";
+import { deriveTaskMetrics } from "../lib/metrics";
 import {
   COLUMNS,
   useColumnConfig,
@@ -37,6 +39,8 @@ export interface DownloadTableProps {
   sort: Sort;
   onSortChange: (s: Sort) => void;
   onSelect: (id: number, ev: React.MouseEvent) => void;
+  onRetry: (id: number) => void;
+  onToggleAll: () => void;
   onContextMenu: (id: number, x: number, y: number) => void;
   /** Double-click on a row → callback with id (used to open Properties
    *  for active downloads, Open File for completed). */
@@ -62,6 +66,8 @@ export function DownloadTable({
   sort,
   onSortChange,
   onSelect,
+  onRetry,
+  onToggleAll,
   onContextMenu,
   onRowActivate,
   onOpenProps,
@@ -129,12 +135,15 @@ export function DownloadTable({
         visible={visible}
         widths={colCfg.cfg.widths}
         sort={sort}
+        allSelected={tasks.length > 0 && tasks.every((t) => selected.has(t.id))}
+        someSelected={tasks.some((t) => selected.has(t.id))}
+        onToggleAll={onToggleAll}
         onSortChange={onSortChange}
         onResize={colCfg.setWidth}
         onMove={colCfg.move}
         onOpenColumnsMenu={(x, y) => setColumnsMenu({ x, y })}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="download-table-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--table-bg)] pb-3">
         {grouped.map((g) => (
           <Group
             key={g.key || "all"}
@@ -144,9 +153,11 @@ export function DownloadTable({
             widths={colCfg.cfg.widths}
             selected={selected}
             onSelect={onSelect}
+            onRetry={onRetry}
             onContextMenu={onContextMenu}
             onRowActivate={onRowActivate}
             onOpenProps={onOpenProps}
+            speedHistory={speedHistory}
           />
         ))}
       </div>
@@ -166,7 +177,9 @@ export function DownloadTable({
 }
 
 function gridTemplate(widths: Record<ColumnId, number>, visible: ColumnId[]) {
-  return visible.map((id) => `${widths[id] ?? 100}px`).join(" ");
+  // Keep selection independent from the first data column. The fixed track
+  // prevents the checkbox from sharing the filename/icon cell.
+  return ["30px", ...visible.map((id) => `minmax(0, ${widths[id] ?? 100}px)`)].join(" ");
 }
 
 function Group({
@@ -176,9 +189,11 @@ function Group({
   widths,
   selected,
   onSelect,
+  onRetry,
   onContextMenu,
   onRowActivate,
   onOpenProps,
+  speedHistory,
 }: {
   groupKey: string;
   items: DownloadTask[];
@@ -186,16 +201,18 @@ function Group({
   widths: Record<ColumnId, number>;
   selected: Set<number>;
   onSelect: (id: number, ev: React.MouseEvent) => void;
+  onRetry: (id: number) => void;
   onContextMenu: (id: number, x: number, y: number) => void;
   onRowActivate?: (id: number) => void;
   onOpenProps?: (id: number) => void;
+  speedHistory?: (id: number) => number[];
 }) {
   return (
     <>
       {groupKey && (
-        <div className="px-3 pt-3 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-slate-500">
+        <div className="px-0 pt-[1px] pb-[1px] text-[10px] font-semibold uppercase tracking-wider text-txt-faint">
           {groupKey}{" "}
-          <span className="ml-1 font-mono tabular-nums text-slate-600">
+          <span className="ml-1 font-mono tabular-nums text-txt-faint">
             ({items.length})
           </span>
         </div>
@@ -208,9 +225,11 @@ function Group({
           widths={widths}
           selected={selected.has(t.id)}
           onSelect={onSelect}
+          onRetry={onRetry}
           onContextMenu={onContextMenu}
           onRowActivate={onRowActivate}
           onOpenProps={onOpenProps}
+          speedHistory={speedHistory}
         />
       ))}
     </>
@@ -221,6 +240,9 @@ function Header({
   visible,
   widths,
   sort,
+  allSelected,
+  someSelected,
+  onToggleAll,
   onSortChange,
   onResize,
   onMove,
@@ -229,6 +251,9 @@ function Header({
   visible: ColumnId[];
   widths: Record<ColumnId, number>;
   sort: Sort;
+  allSelected: boolean;
+  someSelected: boolean;
+  onToggleAll: () => void;
   onSortChange: (s: Sort) => void;
   onResize: (id: ColumnId, w: number) => void;
   onMove: (id: ColumnId, beforeId: ColumnId | null) => void;
@@ -249,6 +274,7 @@ function Header({
     category: "category",
     queue: "queue",
     added: "added_at",
+    last_try: "last_try",
   };
 
   const flip = (field: SortField) => {
@@ -262,22 +288,33 @@ function Header({
     sort.field === f ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
 
   const cell = (align: "left" | "right") =>
-    `flex select-none items-center text-xs font-semibold uppercase tracking-wider text-slate-400 transition-colors hover:text-slate-200 ${
+    `flex select-none items-center text-[10.5px] font-semibold uppercase tracking-wider text-txt-dim transition-colors hover:text-txt ${
       align === "right" ? "justify-end" : "justify-start"
     }`;
 
   return (
     <div
-      className="grid shrink-0 items-center gap-x-0 border-b border-white/5 bg-surface/50 px-3 py-1.5"
+      className="grid shrink-0 items-center gap-x-0 border-b border-[var(--line)] bg-[var(--table-bg)] px-0 py-[2px]"
       style={{ gridTemplateColumns: gridTemplate(widths, visible) }}
       role="row"
     >
+      <div className="flex w-[30px] items-center justify-center border-r border-[var(--line-soft)]">
+        <input
+          type="checkbox"
+          aria-label="Select all visible downloads"
+          checked={allSelected}
+          ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+          onChange={onToggleAll}
+          onClick={(e) => e.stopPropagation()}
+          className="h-3.5 w-3.5 accent-indigo-500"
+        />
+      </div>
       {visible.map((id, i) => {
         const col = COLUMNS.find((c) => c.id === id)!;
         const sf = sortable[id];
         const isLast = i === visible.length - 1;
         return (
-          <div key={id} className="relative flex items-center justify-end pr-3 last:pr-0">
+          <div key={id} className="relative flex items-center justify-end pr-2 last:pr-0 border-r border-[var(--line-soft)]">
             <div
               className={`${cell(col.right ? "right" : "left")} ${
                 sf ? "cursor-pointer" : ""
@@ -395,18 +432,22 @@ function Row({
   widths,
   selected,
   onSelect,
+  onRetry,
   onContextMenu,
   onRowActivate,
   onOpenProps,
+  speedHistory,
 }: {
   t: DownloadTask;
   visible: ColumnId[];
   widths: Record<ColumnId, number>;
   selected: boolean;
   onSelect: (id: number, ev: React.MouseEvent) => void;
+  onRetry: (id: number) => void;
   onContextMenu: (id: number, x: number, y: number) => void;
   onRowActivate?: (id: number) => void;
   onOpenProps?: (id: number) => void;
+  speedHistory?: (id: number) => number[];
 }) {
   const iconResult = useMemo(
     () => fileIconFor(t.filename, t.category),
@@ -418,14 +459,14 @@ function Row({
   const done = t.downloaded || 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
-  const numCell = "text-right font-mono text-xs tabular-nums text-slate-300";
-  const dim = "text-xs text-slate-400";
+  const numCell = "text-right font-mono text-xs tabular-nums text-txt-dim";
+  const dim = "text-xs text-txt-dim";
 
   return (
     <div
       className={
-        "group relative grid cursor-default items-center gap-x-0 border-b border-white/5 px-3 py-1.5 text-sm transition-colors hover:bg-white/[0.04] " +
-        (selected ? "bg-indigo-500/20 ring-1 ring-inset ring-indigo-400/40" : "")
+        "group relative grid cursor-default items-center gap-x-0 border-b border-[var(--line-soft)] bg-[var(--table-bg)] px-0 py-[1px] text-xs transition-colors hover:bg-[var(--row-hover)] " +
+        (selected ? "bg-[var(--accent-soft)]" : "")
       }
       style={{ gridTemplateColumns: gridTemplate(widths, visible) }}
       role="row"
@@ -455,11 +496,12 @@ function Row({
       }}
       onDoubleClick={() => onRowActivate?.(t.id)}
     >
+      <div className="flex w-[30px] items-center justify-center border-r border-[var(--line-soft)]" role="gridcell">
       <button
         type="button"
         aria-label={selected ? `Deselect ${t.filename}` : `Select ${t.filename}`}
         aria-pressed={selected}
-        className={`absolute left-1 top-1/2 z-10 h-4 w-4 -translate-y-1/2 rounded border text-[10px] leading-none ${
+        className={`h-3.5 w-3.5 rounded-none border text-[9px] leading-none transition-colors ${
           selected
             ? "border-indigo-400 bg-indigo-500 text-white"
             : "border-slate-600 bg-slate-900/80 text-transparent hover:border-indigo-400"
@@ -471,11 +513,12 @@ function Row({
       >
         {selected ? "✓" : ""}
       </button>
+      </div>
       {visible.map((id) => {
         const col = COLUMNS.find((c) => c.id === id)!;
-        const align = col.right ? "pr-3" : "pr-3";
+        const align = "pr-2";
         return (
-          <div key={id} className={`${align} overflow-hidden`}>
+          <div key={id} className={`${align} overflow-hidden border-r border-[var(--line-soft)] last:border-r-0`}>
             {renderCell(id, {
               t,
               Icon,
@@ -486,6 +529,8 @@ function Row({
               numCell,
               dim,
               widths,
+              onRetry,
+              speedHistory,
             })}
           </div>
         );
@@ -506,20 +551,21 @@ function renderCell(
     numCell: string;
     dim: string;
     widths: Record<ColumnId, number>;
+    onRetry: (id: number) => void;
     speedHistory?: (id: number) => number[];
   }
 ) {
-  const { t, Icon, iconColor, total, done, pct, numCell, dim, widths, speedHistory } = ctx;
+  const { t, Icon, iconColor, total, done, pct, numCell, dim, widths, onRetry, speedHistory } = ctx;
   switch (id) {
     case "name":
       return (
-        <div className="flex min-w-0 items-center gap-2" title={t.filename || t.url}>
+        <div className="flex min-w-0 items-center gap-1.5" title={t.filename || t.url}>
           <span
-            className={`inline-flex h-4 w-4 shrink-0 items-center justify-center ${iconColor}`}
+            className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center ${iconColor}`}
           >
-            <Icon size={14} />
+            <Icon size={12} />
           </span>
-          <span className="truncate text-slate-100">
+          <span className="truncate text-[12px] text-txt">
             {t.filename || t.url || "—"}
           </span>
         </div>
@@ -527,29 +573,52 @@ function renderCell(
     case "size":
       return <div className={numCell}>{formatBytes(total)}</div>;
     case "status": {
-      // For failed downloads, render a richer label that surfaces the
-      // error reason right in the cell: "Failed / HTTP 404" rather than
-      // just "Failed". Hover shows the full error text.
-      let label = statusLabel(t.status);
+      // Spec 4: when the transfer has all bytes (100%), IDM shows the
+      // row as Complete — never as the transient "Paused" state the
+      // engine parks post-completion. Everything at 100% reads green.
+      const isDoneBytes = total > 0 && done >= total;
+      const statusForUi = isDoneBytes ? "completed" : t.status;
+      // Spec 3: Status combines progress & state — "Downloading 45%",
+      // "Paused 100%", "Complete", "Error". Completion wins over any
+      // transient parked state (spec 4).
+      let label: string;
       let title: string | undefined;
-      if (t.status === "failed") {
-        if (t.error_code) {
-          label = `${statusLabel(t.status)} / HTTP ${t.error_code}`;
-        }
+      if (statusForUi === "failed") {
+        label = statusLabel(statusForUi);
+        if (t.error_code) label = `${statusLabel(statusForUi)} / HTTP ${t.error_code}`;
         if (t.error) title = t.error;
+      } else if (statusForUi === "completed" || statusForUi === "cancelled") {
+        label = statusLabel(statusForUi);
+      } else if (
+        (statusForUi === "downloading" || statusForUi === "paused" || statusForUi === "stopped") &&
+        pct > 0
+      ) {
+        label = `${statusLabel(statusForUi)} ${pct}%`;
+      } else {
+        label = statusLabel(statusForUi);
       }
       return (
         <div
-          className={"text-right text-xs " + statusColor(t.status)}
+          className="flex"
           title={title}
         >
-          {label}
+          <span className={`text-[11.5px] leading-none ${statusBadge(statusForUi)}`}>
+            {label}
+          </span>
           {t.force_started && (
             <span
-              className="ml-1 inline-block rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+              className="ml-1 text-[9.5px] leading-none font-semibold text-amber-300"
               title="Force-started: this task bypassed the normal queue ordering"
             >
               FS
+            </span>
+          )}
+          {t.mirror_index > 0 && (
+            <span
+              className="ml-1 text-[9.5px] leading-none font-semibold text-cyan-300"
+              title={`Mirror #${t.mirror_index}: pulling from ${t.mirrors[t.mirror_index - 1] ?? ""}`}
+            >
+              M{t.mirror_index}
             </span>
           )}
         </div>
@@ -558,15 +627,31 @@ function renderCell(
     case "time_left":
       return (
         <div className={numCell}>
-          {t.status === "downloading" && t.speed_bps > 0
-            ? formatEta(total - done, t.speed_bps)
-            : "—"}
+          {(() => {
+            const m = deriveTaskMetrics(t, speedHistory?.(t.id) ?? []);
+            if (t.status !== "downloading" || m.etaSecs == null) return "—";
+            // IDM renders time left as HH:MM:SS (e.g. 00:02:15).
+            const secs = Math.max(0, Math.round(m.etaSecs));
+            const hh = String(Math.floor(secs / 3600)).padStart(2, "0");
+            const mm = String(Math.floor((secs % 3600) / 60)).padStart(2, "0");
+            const ss = String(secs % 60).padStart(2, "0");
+            return `${hh}:${mm}:${ss}`;
+          })()}
         </div>
       );
     case "speed":
       return (
         <div className={numCell}>
-          {t.status === "downloading" ? formatSpeed(t.speed_bps) : "—"}
+          {(() => {
+            const m = deriveTaskMetrics(t, speedHistory?.(t.id) ?? []);
+            if (t.status === "downloading")
+              return m.speedBps > 0 ? formatSpeed(m.speedBps) : "…";
+            if (t.status === "failed" && m.avgSpeedBps > 0)
+              return formatSpeed(m.avgSpeedBps);
+            if (t.status === "completed" && m.avgSpeedBps > 0)
+              return formatSpeed(m.avgSpeedBps);
+            return "—";
+          })()}
         </div>
       );
     case "speed_graph": {
@@ -581,10 +666,11 @@ function renderCell(
         </div>
       );
     }
-    case "downloaded":
-      return <div className={numCell}>{pct}%</div>;
-    case "progress":
-      return <ProgressBar pct={pct} status={t.status} />;
+
+    case "progress": {
+      const m = deriveTaskMetrics(t, speedHistory?.(t.id) ?? []);
+      return <ProgressCell pct={pct} status={t.status} speed={m.speedBps} error={t.error} taskId={t.id} onRetry={onRetry} />;
+    }
     case "avg_speed":
       return (
         <div className={numCell}>
@@ -596,7 +682,25 @@ function renderCell(
     case "category":
       return <div className={dim + " truncate"}>{t.category || "other"}</div>;
     case "queue":
-      return <div className={dim + " truncate"}>{t.queue || "general"}</div>;
+      return <div className={dim + " truncate"}>{t.queue === "general" ? "Main Queue" : t.queue || "general"}</div>;
+    case "last_try": {
+      // IDM's "Last Try": when finished, show completed date; otherwise
+      // show when it was added (the most recent engine touch lives in
+      // last_resumed_at / started_at).
+      const ts = t.status === "completed" && t.completed_at
+        ? t.completed_at
+        : t.last_resumed_at ?? t.started_at ?? t.created_at ?? t.updated_at;
+      const label =
+        ts ? formatDateTime(ts) : "—";
+      return (
+        <div
+          className={numCell}
+          title={ts ? `Last try: ${formatDateTime(ts)}` : "No last try recorded"}
+        >
+          {label}
+        </div>
+      );
+    }
     case "added":
       return <div className={numCell}>{formatDate(t.created_at)}</div>;
     case "save_to":
@@ -612,6 +716,14 @@ function renderCell(
         </div>
       );
   }
+}
+
+function ProgressCell({ pct, status, speed, error, taskId, onRetry }: { pct: number; status: string; speed: number; error?: string | null; taskId: number; onRetry: (id: number) => void }) {
+  if (status === "completed") return <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--success)]"><span aria-hidden="true">✓</span><span>Complete</span></div>;
+  if (status === "failed") return <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-[var(--danger)]" title={error ?? "Download failed"}><span aria-hidden="true">!</span><span>Failed</span><button type="button" onClick={(e) => { e.stopPropagation(); onRetry(taskId); }} className="ml-auto rounded-[2px] px-1.5 py-0.5 text-[11px] text-red-300 hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400" aria-label="Retry failed download">Retry</button></div>;
+  // Inside the progress column we keep the same authoritative speed value
+  // the Speed column shows (passed down from the row's metrics).
+  return <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><ProgressBar pct={pct} status={status} /></div><span className="shrink-0 text-right font-mono text-xs tabular-nums text-gray-400">{pct}%</span><span className="w-16 shrink-0 text-right font-mono text-xs tabular-nums text-gray-500">{speed > 0 ? formatSpeed(speed) : "…"}</span></div>;
 }
 
 function ProgressBar({ pct, status }: { pct: number; status: string }) {
@@ -634,36 +746,38 @@ function ProgressBar({ pct, status }: { pct: number; status: string }) {
       </div>
     );
   }
+  // Flat utilitarian fills, no gradient, no rounding (refactor rule 1/4).
   const fill =
     status === "paused"
-      ? "from-amber-500/60 to-amber-500"
-      : "from-indigo-500/70 to-indigo-400";
+      ? "bg-amber-500"
+      : status === "failed"
+      ? "bg-red-500"
+      : "bg-[var(--accent)]";
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+    <div className="h-[4px] w-full overflow-hidden rounded-none bg-[var(--progress-track)]">
       <div
-        className={`h-full rounded-full bg-gradient-to-r ${fill} transition-[width] duration-300`}
+        className={`h-full rounded-none ${fill}`}
         style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
       />
     </div>
   );
 }
 
-function statusColor(s: string): string {
+/** Flat status text colors — classic grid: no pill, no background. */
+function statusBadge(s: string): string {
   switch (s) {
     case "downloading":
-      return "text-indigo-400";
+      return "text-[var(--accent)]";
     case "completed":
-      return "text-emerald-500";
+      return "text-[var(--success)]";
     case "paused":
-      return "text-amber-500";
+      return "text-[var(--warning)]";
     case "failed":
-      return "text-red-500";
+      return "text-[var(--danger)]";
     case "cancelled":
-      return "text-slate-500";
     case "queued":
     case "scheduled":
-      return "text-slate-400";
     default:
-      return "text-slate-400";
+      return "text-txt-faint";
   }
 }

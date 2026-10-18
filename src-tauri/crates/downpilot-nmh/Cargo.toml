@@ -1,6 +1,6 @@
 [package]
 name = "downpilot-nmh"
-version = "0.1.0"
+version = "1.0.0"
 description = "DownPilot Chrome native messaging host relay: stdin/stdout <-> 127.0.0.1:19851"
 edition = "2021"
 

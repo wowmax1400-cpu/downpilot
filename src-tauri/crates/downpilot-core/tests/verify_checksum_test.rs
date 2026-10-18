@@ -74,6 +74,7 @@ fn new_task(
         start_immediately: false,
         browser_dedup_id: String::new(),
         skip_probe: true,
+        mirrors: Vec::new(),
     }
 }
 
@@ -100,7 +101,10 @@ async fn verify_checksum_matches_a_correct_expected_digest() {
     let res: ChecksumResult = mgr.verify_checksum(id).expect("verify");
     assert_eq!(res.algorithm, "sha256");
     assert_eq!(res.computed, expected, "computed digest must match file");
-    assert_eq!(res.expected, expected, "expected must be normalized to lowercase");
+    assert_eq!(
+        res.expected, expected,
+        "expected must be normalized to lowercase"
+    );
     assert_eq!(res.matches, Some(true), "match flag should be true");
     assert_eq!(res.file_size, FIXTURE.len() as u64);
 }
@@ -214,7 +218,10 @@ async fn verify_checksum_errors_on_missing_file() {
     // We don't assert the exact text — the OS-level error string varies
     // by platform — but it should be a present-tense complaint, not a
     // crash. A crash would fail the test process entirely.
-    assert!(!err.is_empty(), "error message should explain what went wrong");
+    assert!(
+        !err.is_empty(),
+        "error message should explain what went wrong"
+    );
 }
 
 #[tokio::test]

@@ -23,11 +23,10 @@
 //!   * cycle prevention (A → B → A is a no-op)
 //!   * per-queue completion action "open_folder" / "notify" / "none"
 
-use std::path::Path;
 use std::sync::Arc;
 
 use downpilot_core::engine::DownloadManager;
-use downpilot_core::models::{DownloadQueue, NewDownload, Schedule, Status};
+use downpilot_core::models::{DownloadQueue, NewDownload, Status};
 use tempfile::{tempdir, TempDir};
 
 /// Build a fresh manager with a tempdir-backed SQLite + state dir.
@@ -75,6 +74,7 @@ fn insert_queued(
         priority: Some(priority),
         browser_dedup_id: String::new(),
         skip_probe: true,
+        mirrors: Vec::new(),
     };
     // Insert via the DB directly so we don't need a server.
     let id = mgr
@@ -82,7 +82,9 @@ fn insert_queued(
         .insert(&nd, &mgr.default_save_dir_pub())
         .expect("insert");
     if force_started {
-        mgr.db.set_force_started(id, true).expect("set_force_started");
+        mgr.db
+            .set_force_started(id, true)
+            .expect("set_force_started");
     }
     // Make sure the row really is Queued (insert sets it that way).
     let t = mgr.db.get(id).expect("row present").expect("row");
@@ -90,12 +92,19 @@ fn insert_queued(
     id
 }
 
-fn create_queue(mgr: &Arc<DownloadManager>, name: &str, max_simultaneous: i32, priority: i32) -> DownloadQueue {
-    let mut q = DownloadQueue::default();
-    q.name = name.to_string();
-    q.label = name.to_string();
-    q.max_simultaneous = max_simultaneous;
-    q.priority = priority;
+fn create_queue(
+    mgr: &Arc<DownloadManager>,
+    name: &str,
+    max_simultaneous: i32,
+    priority: i32,
+) -> DownloadQueue {
+    let q = DownloadQueue {
+        name: name.to_string(),
+        label: name.to_string(),
+        max_simultaneous,
+        priority,
+        ..Default::default()
+    };
     mgr.create_queue_pub(q.clone()).expect("create_queue");
     q
 }
@@ -106,7 +115,6 @@ fn create_queue(mgr: &Arc<DownloadManager>, name: &str, max_simultaneous: i32, p
 
 #[tokio::test]
 async fn schedule_sort_key_prefers_force_started_then_queue_then_task() {
-    use downpilot_core::models::DownloadTask;
     let mgr_tmp = make_manager();
     let mgr = mgr_tmp.0;
     // Two queues, A has higher priority than B. Inside A we add a
@@ -122,7 +130,7 @@ async fn schedule_sort_key_prefers_force_started_then_queue_then_task() {
     let mut keys: Vec<(std::cmp::Ordering, i64)> = tasks
         .iter()
         .map(|t| {
-            let k = DownloadManager::schedule_sort_key(t, &queues);
+            let _k = DownloadManager::schedule_sort_key(t, &queues);
             (std::cmp::Ordering::Equal, t.id) // placeholder, real comparison below
         })
         .collect();
@@ -207,7 +215,7 @@ async fn global_max_simultaneous_caps_total_active_across_queues() {
         insert_queued(&mgr, "q2", 0, false);
     }
     mgr.govern_concurrency_for_test();
-    let tasks = mgr.list();
+    let _tasks = mgr.list();
     // We never start a real download (no network), so the cap is
     // observed by the fact that no rows were promoted. The
     // important property is: after a hypothetical promotion the
@@ -241,7 +249,11 @@ async fn force_start_requires_unbound_queue_concurrency_slot() {
     // the queue's single slot is taken.
     let other = insert_queued(&mgr, "solo", 0, false);
     let result = mgr.force_start(other);
-    assert!(result.is_err(), "force_start should be rejected: {:?}", result);
+    assert!(
+        result.is_err(),
+        "force_start should be rejected: {:?}",
+        result
+    );
     let err = result.unwrap_err();
     assert!(
         err.contains("queue concurrency"),
@@ -251,8 +263,14 @@ async fn force_start_requires_unbound_queue_concurrency_slot() {
     // The persistent priority of the rejected task is still 0 — force
     // start did not touch it.
     let row = mgr.get(other).unwrap();
-    assert_eq!(row.priority, 0, "rejected force_start must not mutate priority");
-    assert!(!row.force_started, "rejected force_start must not set the flag");
+    assert_eq!(
+        row.priority, 0,
+        "rejected force_start must not mutate priority"
+    );
+    assert!(
+        !row.force_started,
+        "rejected force_start must not set the flag"
+    );
 }
 
 #[tokio::test]
@@ -264,7 +282,7 @@ async fn force_start_clears_flag_when_task_leaves_downloading() {
     // flag and immediately try to start the download (which fails
     // because the URL has no server — we don't care for this test).
     let _ = mgr.force_start(id);
-    let row = mgr.get(id).unwrap();
+    let _row = mgr.get(id).unwrap();
     // Either: flag is true (download attempted, still in
     // Downloading) OR the engine has already cleared it because
     // the download errored out. We assert that *after* we force the
@@ -339,7 +357,11 @@ async fn schedule_window_same_day_and_overnight_and_weekly() {
 
     // Disable the schedule — it should immediately fall out of the
     // active set on the next enforce_bandwidth_profiles tick.
-    let mut sch2 = mgr.list_schedules().into_iter().find(|s| s.id == id).unwrap();
+    let mut sch2 = mgr
+        .list_schedules()
+        .into_iter()
+        .find(|s| s.id == id)
+        .unwrap();
     sch2.enabled = false;
     mgr.save_schedule(sch2).expect("resave");
     mgr.enforce_bandwidth_profiles();
@@ -367,7 +389,7 @@ async fn schedule_window_overnight_matches_correctly() {
     // schedule that may be active (overnight). The overnight one
     // is observable when the current time falls inside.
     let now_hour = Local::now().hour();
-    let (start, end) = if now_hour >= 6 && now_hour < 23 {
+    let (start, end) = if (6..23).contains(&now_hour) {
         // Daytime — overnight is INACTIVE, but a same-day window
         // covering now is ACTIVE.
         ("now-2h", "now+2h")
@@ -444,10 +466,7 @@ async fn queue_chaining_promotes_target_when_source_empties() {
     // recorded and the next slot is taken. We assert the
     // intended end-state, not "still Queued".
     let tasks = mgr.list();
-    let chain_b_alive = tasks
-        .iter()
-        .filter(|t| t.queue == "chain-b")
-        .count();
+    let chain_b_alive = tasks.iter().filter(|t| t.queue == "chain-b").count();
     assert_eq!(
         chain_b_alive, 1,
         "chain-b's row should still exist (promoted, not dropped)"
@@ -516,10 +535,7 @@ async fn priority_force_started_and_next_queue_persist_across_reopen() {
         assert_eq!(q.next_queue, "persist-next");
         assert_eq!(q.priority, 7, "queue priority must persist");
         let tasks = mgr.list();
-        let row = tasks
-            .iter()
-            .find(|t| t.queue == "persist")
-            .expect("task");
+        let row = tasks.iter().find(|t| t.queue == "persist").expect("task");
         assert_eq!(row.priority, 8, "task priority must persist");
         assert!(
             row.force_started,
@@ -549,7 +565,7 @@ async fn queue_ordering_via_priority_persists() {
         let named: Vec<&str> = initial
             .iter()
             .map(|q| q.name.as_str())
-            .filter(|n| *n != "general")
+            .filter(|n| *n != "general" && *n != "synchronization")
             .collect();
         // ASC sort: -30 (z), -20 (m), -10 (a).
         assert_eq!(named, vec!["z", "m", "a"], "initial sort by priority asc");
@@ -561,7 +577,7 @@ async fn queue_ordering_via_priority_persists() {
         let named: Vec<&str> = after
             .iter()
             .map(|q| q.name.as_str())
-            .filter(|n| *n != "general")
+            .filter(|n| *n != "general" && *n != "synchronization")
             .collect();
         assert_eq!(named, vec!["z", "a", "m"], "after reorder up by one");
     }
@@ -573,7 +589,7 @@ async fn queue_ordering_via_priority_persists() {
         let named: Vec<&str> = after
             .iter()
             .map(|q| q.name.as_str())
-            .filter(|n| *n != "general")
+            .filter(|n| *n != "general" && *n != "synchronization")
             .collect();
         assert_eq!(named, vec!["z", "a", "m"]);
     }
@@ -594,14 +610,28 @@ async fn scheduler_status_reflects_live_state() {
     let snap = mgr.scheduler_status();
     // The seeded "general" queue is also present, so we look up our
     // two test queues by name.
-    let alpha = snap.queues.iter().find(|q| q.queue == "alpha").expect("alpha");
-    let beta = snap.queues.iter().find(|q| q.queue == "beta").expect("beta");
+    let alpha = snap
+        .queues
+        .iter()
+        .find(|q| q.queue == "alpha")
+        .expect("alpha");
+    let beta = snap
+        .queues
+        .iter()
+        .find(|q| q.queue == "beta")
+        .expect("beta");
     assert_eq!(alpha.max_simultaneous, 2);
     assert_eq!(beta.max_simultaneous, 3);
     // Three queued tasks distributed as 1+2.
     assert_eq!(alpha.queued_downloads, 1);
     assert_eq!(beta.queued_downloads, 2);
-    assert_eq!(snap.queues.iter().map(|q| q.queued_downloads).sum::<usize>(), 3);
+    assert_eq!(
+        snap.queues
+            .iter()
+            .map(|q| q.queued_downloads)
+            .sum::<usize>(),
+        3
+    );
     // Global cap is unset → 0 in the snapshot.
     assert_eq!(snap.global_max_simultaneous, 0);
     // No schedule overrides are active.
@@ -664,7 +694,11 @@ async fn bandwidth_profile_baseline_is_captured_then_restored() {
     mgr.enforce_bandwidth_profiles();
     assert_eq!(mgr.effective_queue_speed_kbps("bwq"), 500);
     // Disable the schedule — baseline must be restored to 2000.
-    let mut sch2 = mgr.list_schedules().into_iter().find(|s| s.name == "Slow").unwrap();
+    let mut sch2 = mgr
+        .list_schedules()
+        .into_iter()
+        .find(|s| s.name == "Slow")
+        .unwrap();
     sch2.enabled = false;
     mgr.save_schedule(sch2).expect("resave");
     mgr.enforce_bandwidth_profiles();
@@ -727,7 +761,10 @@ impl EngineTestHelpers for Arc<DownloadManager> {
                 global_running += 1;
             }
         }
-        let mut queued: Vec<&_> = tasks.iter().filter(|t| t.status == Status::Queued).collect();
+        let mut queued: Vec<&_> = tasks
+            .iter()
+            .filter(|t| t.status == Status::Queued)
+            .collect();
         queued.sort_by_key(|t| DownloadManager::schedule_sort_key(t, &queues));
         let mut would = 0usize;
         for t in queued {

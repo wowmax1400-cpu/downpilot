@@ -39,10 +39,16 @@ fn bandwidth_profile_overrides_and_restores_queue_speed() {
     assert!(active[0].affected_queues.iter().any(|q| q == "general"));
 
     let eff = manager.effective_queue_speed_kbps("general");
-    assert_eq!(eff, 1234, "override should set effective speed to 1234 kbps");
+    assert_eq!(
+        eff, 1234,
+        "override should set effective speed to 1234 kbps"
+    );
 
-    let mut sch2 = manager.list_schedules().into_iter()
-        .find(|s| s.id == id).expect("schedule present");
+    let mut sch2 = manager
+        .list_schedules()
+        .into_iter()
+        .find(|s| s.id == id)
+        .expect("schedule present");
     sch2.enabled = false;
     manager.save_schedule(sch2).expect("re-save ok");
     manager.enforce_bandwidth_profiles();
@@ -62,20 +68,36 @@ fn overlapping_profiles_resolve_by_priority() {
     let (manager, _rx) = DownloadManager::new(&db_path, state_dir.clone());
 
     let lo = Schedule {
-        id: 0, name: "Day".to_string(), queue: String::new(), enabled: true,
-        kind: "bandwidth".to_string(), start_time: "00:00".to_string(),
-        end_time: "23:59".to_string(), days: 127, action: "bandwidth".to_string(),
-        bandwidth_kbps: 1000, on_complete: "none".to_string(),
-        on_complete_command: String::new(), priority: 1,
+        id: 0,
+        name: "Day".to_string(),
+        queue: String::new(),
+        enabled: true,
+        kind: "bandwidth".to_string(),
+        start_time: "00:00".to_string(),
+        end_time: "23:59".to_string(),
+        days: 127,
+        action: "bandwidth".to_string(),
+        bandwidth_kbps: 1000,
+        on_complete: "none".to_string(),
+        on_complete_command: String::new(),
+        priority: 1,
         overrides_json: r#"{"general":1000}"#.to_string(),
     };
     manager.save_schedule(lo).unwrap();
     let hi = Schedule {
-        id: 0, name: "Night".to_string(), queue: String::new(), enabled: true,
-        kind: "bandwidth".to_string(), start_time: "00:00".to_string(),
-        end_time: "23:59".to_string(), days: 127, action: "bandwidth".to_string(),
-        bandwidth_kbps: 5000, on_complete: "none".to_string(),
-        on_complete_command: String::new(), priority: 100,
+        id: 0,
+        name: "Night".to_string(),
+        queue: String::new(),
+        enabled: true,
+        kind: "bandwidth".to_string(),
+        start_time: "00:00".to_string(),
+        end_time: "23:59".to_string(),
+        days: 127,
+        action: "bandwidth".to_string(),
+        bandwidth_kbps: 5000,
+        on_complete: "none".to_string(),
+        on_complete_command: String::new(),
+        priority: 100,
         overrides_json: r#"{"general":5000}"#.to_string(),
     };
     manager.save_schedule(hi).unwrap();
@@ -94,19 +116,24 @@ fn per_queue_auth_metadata_round_trips() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let (manager, _rx) = DownloadManager::new(&db_path, state_dir.clone());
 
-    let mut q = DownloadQueue::default();
-    q.name = "alpha".to_string();
-    q.label = "Alpha".to_string();
-    q.proxy_url = "http://127.0.0.1:8080".to_string();
-    q.user_agent = "DownPilot-Test/1.0".to_string();
-    q.cookies = "session=abc".to_string();
-    q.auth_ref = "alpha:user:secret".to_string();
-    q.auth_user = "alice".to_string();
-    q.has_password = true;
+    let q = DownloadQueue {
+        name: "alpha".to_string(),
+        label: "Alpha".to_string(),
+        proxy_url: "http://127.0.0.1:8080".to_string(),
+        user_agent: "DownPilot-Test/1.0".to_string(),
+        cookies: "session=abc".to_string(),
+        auth_ref: "alpha:user:secret".to_string(),
+        auth_user: "alice".to_string(),
+        has_password: true,
+        ..Default::default()
+    };
     manager.create_queue(q.clone()).expect("create_queue");
 
     let list = manager.list_queues();
-    let back = list.iter().find(|x| x.name == "alpha").expect("alpha present");
+    let back = list
+        .iter()
+        .find(|x| x.name == "alpha")
+        .expect("alpha present");
     assert_eq!(back.proxy_url, "http://127.0.0.1:8080");
     assert_eq!(back.user_agent, "DownPilot-Test/1.0");
     assert_eq!(back.cookies, "session=abc");

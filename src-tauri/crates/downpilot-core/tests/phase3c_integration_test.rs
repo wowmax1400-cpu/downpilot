@@ -35,7 +35,7 @@
 //! - Precedence: explicit category > site rule > extension
 
 use downpilot_core::engine::DownloadManager;
-use downpilot_core::models::{GrabRules, NewDownload, SiteRule, Status};
+use downpilot_core::models::{GrabRules, NewDownload, SiteRule};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -118,6 +118,7 @@ fn mk_nd(url: &str, dedup: &str) -> NewDownload {
         priority: None,
         browser_dedup_id: dedup.to_string(),
         skip_probe: true,
+        mirrors: Vec::new(),
     }
 }
 
@@ -125,6 +126,7 @@ fn mk_nd_with(url: &str, queue: Option<&str>, category: Option<&str>) -> NewDown
     let mut n = mk_nd(url, "");
     n.queue = queue.map(|s| s.to_string());
     n.category = category.map(|s| s.to_string());
+    n.mirrors = Vec::new();
     n
 }
 
@@ -150,12 +152,16 @@ async fn completed_download_routes_to_category_destination() {
         builtin: false,
     })
     .unwrap();
-    let mut nd = mk_nd_with("https://example.test/clip.mp4", Some("general"), Some("video"));
+    let mut nd = mk_nd_with(
+        "https://example.test/clip.mp4",
+        Some("general"),
+        Some("video"),
+    );
     nd.filename = Some("clip.mp4".into());
     nd.save_dir = Some(source.to_string_lossy().into_owned());
     let id = mgr.add(nd).await.unwrap();
 
-    assert_eq!(mgr.route_completed_file_for_test(id).unwrap(), true);
+    assert!(mgr.route_completed_file_for_test(id).unwrap());
     assert!(destination.join("clip.mp4").exists());
     assert!(!source.join("clip.mp4").exists());
     assert_eq!(mgr.get(id).unwrap().save_dir, destination.to_string_lossy());
@@ -167,12 +173,16 @@ async fn completed_download_without_category_destination_is_unchanged() {
     let source = tmp.path().join("source");
     std::fs::create_dir_all(&source).unwrap();
     std::fs::write(source.join("readme.txt"), b"downloaded").unwrap();
-    let mut nd = mk_nd_with("https://example.test/readme.txt", Some("general"), Some("documents"));
+    let mut nd = mk_nd_with(
+        "https://example.test/readme.txt",
+        Some("general"),
+        Some("documents"),
+    );
     nd.filename = Some("readme.txt".into());
     nd.save_dir = Some(source.to_string_lossy().into_owned());
     let id = mgr.add(nd).await.unwrap();
 
-    assert_eq!(mgr.route_completed_file_for_test(id).unwrap(), false);
+    assert!(!mgr.route_completed_file_for_test(id).unwrap());
     assert!(source.join("readme.txt").exists());
     assert_eq!(mgr.get(id).unwrap().save_dir, source.to_string_lossy());
 }
@@ -189,14 +199,16 @@ async fn site_rule_category_inherits_category_destination() {
         queue: "video-queue".into(),
         color: Some("#38bdf8".into()),
         builtin: false,
-    }).unwrap();
+    })
+    .unwrap();
     mgr.save_site(SiteRule {
         domain: "capture.example".into(),
         queue: "video-queue".into(),
         category: "video".into(),
         auto_capture: true,
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
     let mut nd = mk_nd("https://capture.example/clip.mp4", "browser-chain-1");
     nd.filename = Some("clip.mp4".into());
     let id = mgr.add(nd).await.unwrap();
@@ -228,7 +240,10 @@ async fn grabber_detects_href_and_src_links() {
     // The grabber only keeps links whose extension matches the
     // known set, so .css and .js are dropped; the others survive.
     let names: Vec<String> = links.iter().map(|l| l.filename.clone()).collect();
-    assert!(names.iter().any(|n| n == "a.zip"), "href zip kept: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "a.zip"),
+        "href zip kept: {names:?}"
+    );
     // b.png is excluded by sensible_defaults (image extensions
     // are stripped by default to keep grabber output focused on
     // downloadable resources).
@@ -236,7 +251,10 @@ async fn grabber_detects_href_and_src_links() {
         !names.iter().any(|n| n == "b.png"),
         "png excluded by default: {names:?}"
     );
-    assert!(names.iter().any(|n| n == "movie.mp4"), "video src kept: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "movie.mp4"),
+        "video src kept: {names:?}"
+    );
     assert!(
         !names.iter().any(|n| n == "app.js"),
         "js dropped by extension filter: {names:?}"
@@ -339,10 +357,7 @@ async fn grabber_exclude_extensions_drops_links() {
     let (mgr, _tmp) = new_mgr();
     let mut rules = GrabRules::sensible_defaults();
     rules.exclude_extensions = vec!["rar".into(), "7z".into()];
-    let links = mgr
-        .grab_site_with_rules(&url, 100, &rules)
-        .await
-        .unwrap();
+    let links = mgr.grab_site_with_rules(&url, 100, &rules).await.unwrap();
     let names: Vec<String> = links.iter().map(|l| l.filename.clone()).collect();
     assert_eq!(names, vec!["a.zip"]);
 }
@@ -355,12 +370,11 @@ async fn grabber_include_extensions_acts_as_allow_list() {
         .to_string();
     let (url, _h) = spawn_page_server(html).await;
     let (mgr, _tmp) = new_mgr();
-    let mut rules = GrabRules::default();
-    rules.include_extensions = vec!["mp4".into()];
-    let links = mgr
-        .grab_site_with_rules(&url, 100, &rules)
-        .await
-        .unwrap();
+    let rules = GrabRules {
+        include_extensions: vec!["mp4".into()],
+        ..Default::default()
+    };
+    let links = mgr.grab_site_with_rules(&url, 100, &rules).await.unwrap();
     let names: Vec<String> = links.iter().map(|l| l.filename.clone()).collect();
     assert_eq!(names, vec!["b.mp4"]);
 }
@@ -372,12 +386,11 @@ async fn grabber_exclude_domains_drops_links() {
         .to_string();
     let (url, _h) = spawn_page_server(html).await;
     let (mgr, _tmp) = new_mgr();
-    let mut rules = GrabRules::default();
-    rules.exclude_domains = vec!["other.com".into()];
-    let links = mgr
-        .grab_site_with_rules(&url, 100, &rules)
-        .await
-        .unwrap();
+    let rules = GrabRules {
+        exclude_domains: vec!["other.com".into()],
+        ..Default::default()
+    };
+    let links = mgr.grab_site_with_rules(&url, 100, &rules).await.unwrap();
     let urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
     assert_eq!(urls.len(), 1);
     assert!(urls[0].contains("example.com"));
@@ -458,10 +471,7 @@ async fn add_batch_inserts_all_rows_and_reports_per_row_results() {
     ];
     let results = mgr.add_batch(nds).await;
     assert_eq!(results.len(), 3);
-    let ids: Vec<i64> = results
-        .iter()
-        .map(|r| r.as_ref().expect("ok").clone())
-        .collect();
+    let ids: Vec<i64> = results.iter().map(|r| *r.as_ref().expect("ok")).collect();
     // All distinct.
     let unique: HashSet<i64> = ids.iter().copied().collect();
     assert_eq!(unique.len(), 3);
@@ -508,6 +518,7 @@ async fn add_batch_does_not_abort_on_individual_failure() {
         priority: None,
         browser_dedup_id: String::new(),
         skip_probe: true,
+        mirrors: Vec::new(),
     };
     let bad = NewDownload {
         url: "https://example.com/will-not-be-inserted".into(),
@@ -515,13 +526,20 @@ async fn add_batch_does_not_abort_on_individual_failure() {
         save_dir: Some("/proc/1/should-not-exist/downpilot".into()),
         ..good("https://example.com/x")
     };
-    let nds = vec![good("https://example.com/a"), bad, good("https://example.com/b")];
+    let nds = vec![
+        good("https://example.com/a"),
+        bad,
+        good("https://example.com/b"),
+    ];
     let results = mgr.add_batch(nds).await;
     assert_eq!(results.len(), 3);
     let ok = results.iter().filter(|r| r.is_ok()).count();
     let err = results.iter().filter(|r| r.is_err()).count();
     assert_eq!(ok, 2, "the two good rows must succeed");
-    assert_eq!(err, 1, "the bad row must report an error without aborting the batch");
+    assert_eq!(
+        err, 1,
+        "the bad row must report an error without aborting the batch"
+    );
 }
 
 #[test]
@@ -554,14 +572,11 @@ fn find_by_url_returns_most_recent_match_and_count_works() {
         priority: None,
         browser_dedup_id: String::new(),
         skip_probe: true,
+        mirrors: Vec::new(),
     };
     let a = db.insert(&nd("https://example.com/a"), "/tmp").unwrap();
-    let b = db
-        .insert(&nd("https://example.com/a"), "/tmp")
-        .unwrap();
-    let _c = db
-        .insert(&nd("https://example.com/b"), "/tmp")
-        .unwrap();
+    let b = db.insert(&nd("https://example.com/a"), "/tmp").unwrap();
+    let _c = db.insert(&nd("https://example.com/b"), "/tmp").unwrap();
     // find_by_url returns the *most recent* match.
     let found = db.find_by_url("https://example.com/a").unwrap();
     assert_eq!(found, Some(b));
@@ -600,10 +615,7 @@ fn site_rule_category_queue_save_dir_applied_at_insert() {
         queue: Some("general".into()),
         ..mk_nd("https://example.com/x", "")
     };
-    let id = mgr
-        .db
-        .insert(&nd, "/tmp/files-example")
-        .expect("insert");
+    let id = mgr.db.insert(&nd, "/tmp/files-example").expect("insert");
     // Apply site rules by hand so we can run this synchronously
     // without the network probe. (The production path applies
     // these inside `add`; this is a focused re-execution of the
@@ -624,7 +636,10 @@ fn site_rule_category_queue_save_dir_applied_at_insert() {
     }
     let row = mgr.get(id).expect("row");
     assert_eq!(row.queue, "general");
-    assert_eq!(row.category, "video", "site rule overrides caller's category");
+    assert_eq!(
+        row.category, "video",
+        "site rule overrides caller's category"
+    );
     assert_eq!(row.save_dir, "/tmp/files-example");
     assert_eq!(row.user_agent.as_deref(), Some("DownPilot-Test/2"));
 }
@@ -638,7 +653,9 @@ fn site_rule_lookalike_rejection_works_against_real_rules() {
     })
     .unwrap();
     assert!(mgr.test_site_match("https://notexample.com/x").is_none());
-    assert!(mgr.test_site_match("https://example.com.evil.tld/x").is_none());
+    assert!(mgr
+        .test_site_match("https://example.com.evil.tld/x")
+        .is_none());
     assert!(mgr.test_site_match("https://www.example.com/x").is_some());
     assert!(mgr.test_site_match("https://a.b.example.com/x").is_some());
 }
@@ -688,8 +705,14 @@ async fn browser_capture_with_browser_dedup_id_is_idempotent() {
     let (mgr, _tmp) = new_mgr();
     // skip_probe=true → we don't need a real network server; the
     // engine inserts the row directly without the probe round-trip.
-    let first = mgr.add(mk_nd("https://example.com/a", "ext-1")).await.unwrap();
-    let second = mgr.add(mk_nd("https://example.com/a", "ext-1")).await.unwrap();
+    let first = mgr
+        .add(mk_nd("https://example.com/a", "ext-1"))
+        .await
+        .unwrap();
+    let second = mgr
+        .add(mk_nd("https://example.com/a", "ext-1"))
+        .await
+        .unwrap();
     assert_eq!(first, second, "duplicate dedup_id returns the original id");
     let n = mgr.db.count_by_url("https://example.com/a").unwrap();
     assert_eq!(n, 1, "only one row should be in the table");
@@ -731,7 +754,9 @@ async fn browser_capture_routes_through_site_rule_when_auto_capture_on() {
     .unwrap();
     // Extension submission. skip_probe=true so we don't need a
     // real server. The site rule must still be applied.
-    let _id = mgr.add(mk_nd("https://capture.example/v.mp4", "ext-V")).await;
+    let _id = mgr
+        .add(mk_nd("https://capture.example/v.mp4", "ext-V"))
+        .await;
     let list = mgr.list();
     let row = list
         .iter()
@@ -748,9 +773,7 @@ async fn browser_capture_routes_through_site_rule_when_auto_capture_on() {
             mgr.db.set_category(row.id, &site.category).unwrap();
         }
         if !site.user_agent.is_empty() {
-            mgr.db
-                .set_user_agent(row.id, &site.user_agent)
-                .unwrap();
+            mgr.db.set_user_agent(row.id, &site.user_agent).unwrap();
         }
     }
     let row = mgr.get(row.id).expect("row");
@@ -767,10 +790,16 @@ async fn browser_capture_persists_dedup_id_across_reopen() {
     // a duplicate is submitted.
     let dir = tempdir().unwrap();
     let mgr1 = new_mgr_in(dir.path());
-    let id1 = mgr1.add(mk_nd("https://example.com/persisted", "ext-persist")).await.unwrap();
+    let id1 = mgr1
+        .add(mk_nd("https://example.com/persisted", "ext-persist"))
+        .await
+        .unwrap();
     drop(mgr1);
     let mgr2 = new_mgr_in(dir.path());
-    let id2 = mgr2.add(mk_nd("https://example.com/persisted", "ext-persist")).await.unwrap();
+    let id2 = mgr2
+        .add(mk_nd("https://example.com/persisted", "ext-persist"))
+        .await
+        .unwrap();
     assert_eq!(id1, id2);
     let row = mgr2.get(id2).expect("row");
     assert_eq!(row.url, "https://example.com/persisted");
@@ -864,10 +893,7 @@ async fn add_batch_preserves_input_order() {
     let results = mgr.add_batch(nds.clone()).await;
     assert_eq!(results.len(), 10);
     // The order of inserted ids must follow the order of inputs.
-    let ids: Vec<i64> = results
-        .iter()
-        .map(|r| r.as_ref().unwrap().clone())
-        .collect();
+    let ids: Vec<i64> = results.iter().map(|r| *r.as_ref().unwrap()).collect();
     for (i, id) in ids.iter().enumerate() {
         let row = mgr.get(*id).expect("row");
         assert_eq!(row.url, nds[i].url);
@@ -889,14 +915,16 @@ async fn batch_explicit_fields_override_each_url_site_rule() {
         save_dir: alpha_dir.to_string_lossy().into_owned(),
         category: "video".into(),
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
     mgr.save_site(SiteRule {
         domain: "beta.example".into(),
         queue: "beta-queue".into(),
         save_dir: beta_dir.to_string_lossy().into_owned(),
         category: "documents".into(),
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
 
     let mut explicit = mk_nd("https://alpha.example/a.mp4", "");
     explicit.filename = Some("a.mp4".into());

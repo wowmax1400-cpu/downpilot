@@ -302,7 +302,7 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
                   </div>
                 )}
                 {verifyResult && (
-                  <div className="rounded border border-white/10 bg-white/[0.02] p-2 text-xs">
+                  <div className="rounded-[2px] border border-white/10 bg-white/[0.02] p-2 text-xs">
                     <div>
                       <span className="text-txt-dim">Algorithm:</span>{" "}
                       {verifyResult.algorithm}

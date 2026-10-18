@@ -1,6 +1,6 @@
 [package]
 name = "downpilot-core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "DownPilot download engine: chunked downloads, pause/resume, SQLite persistence, yt-dlp wrapper"
 
@@ -16,6 +16,27 @@ sha2 = "0.10"
 hex = "0.4"
 regex = "1"
 chrono = "0.4"
+# Real disk-free-space detection via the `libc` syscall (cross-platform).
+libc = "0.2"
+# OS keyring for secure credential storage. The `keyring` crate's default features
+# already include the Linux backend (`zbus-secret-service-keyring-store` which uses
+# `libsecret` via D-Bus), the macOS backend (Keychain), and the Windows backend
+# (Credential Manager). When the keyring is unavailable (no D-Bus session, etc.)
+# `credentials.rs` falls back to an AES-256-GCM-encrypted file.
+keyring = "4"
+# AES-256-GCM for the encrypted-file fallback path.
+aes-gcm = "0.10"
+# CSPRNG for nonces and the ephemeral master key.
+rand = "0.8"
+# Base64 for HTTP Basic auth encoding.
+base64 = "0.22"
+# FTP client for ftp:// URLs (async, tokio runtime). Plain FTP only; TLS
+# variants (ftps://) left as a future feature — the `tokio` feature avoids
+# smol entirely and keeps dep tree minimal.
+suppaftp = { version = "12", features = ["tokio"] }
+# Real free-space detection without a `libc` dep: calls statvfs / GetDiskFreeSpaceEx
+# via this shim so we don't need to maintain per-OS FFI in this file.
+# (kept as a comment so anyone reading sees the intent; the real impl lives in src/disk_free.rs)
 
 [dev-dependencies]
 tempfile = "3"

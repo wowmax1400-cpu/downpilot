@@ -1,21 +1,19 @@
-// Modern dark toolbar: a single unified container with rounded hover
-// states. Inline icon+label buttons (no stacked IDM-style). Subtle dark
-// border bottom separates it from the body. The right side has a
-// bandwidth selector (IDM-style: Unlimited / 1 / 5 / 10 MB/s / Custom).
+// IDM-style toolbar: large icons stacked ABOVE their labels, grouped
+// and separated by vertical dividers (spec):
+//   [Add URL] | [Resume, Pause, Stop All] | [Delete] |
+//   [Options, Scheduler, Site Grabber]  (spec 1)
+// The right side keeps the bandwidth selector (Unlimited / 1 / 5 /
+// 10 MB/s / Custom) — IDM's own cap dropdown lives in the same place.
 
 import {
   IconAdd,
   IconStart,
   IconPause,
-  IconStop,
   IconDelete,
   IconOptions,
   IconScheduler,
-  IconQueue,
   IconGrabber,
-  IconStopAll,
-  IconDeleteAll,
-  IconForceStart,
+  IconStop,
 } from "./icons";
 import type { DownloadsStore } from "../store/useDownloads";
 import type { AppSettings } from "../types";
@@ -25,14 +23,10 @@ export type ToolbarAction =
   | "grabber"
   | "start"
   | "pause"
-  | "stop"
   | "stopAll"
-  | "forceStart"
   | "delete"
-  | "deleteAll"
-  | "scheduler"
-  | "queues"
-  | "options";
+  | "options"
+  | "scheduler";
 
 interface ToolbarProps {
   store: DownloadsStore;
@@ -48,9 +42,12 @@ interface BtnProps {
   title?: string;
 }
 
+/** Dense utility-strip button: icon + label on ONE line (classic
+ *  desktop toolbar), rectangular with a sharp hairline border. No
+ *  rounded corners, no pill shapes (refactor rule 2). */
 function Btn({ icon, label, onClick, disabled, variant = "default", title }: BtnProps) {
   const base =
-    "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40";
+    "inline-flex h-[24px] items-center gap-1.5 rounded-[2px] border border-transparent px-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40";
   const color =
     variant === "accent"
       ? "text-indigo-400 hover:bg-indigo-500/10"
@@ -65,14 +62,14 @@ function Btn({ icon, label, onClick, disabled, variant = "default", title }: Btn
       title={title ?? label}
       className={`${base} ${color}`}
     >
-      <span className="inline-flex h-4 w-4 items-center justify-center">{icon}</span>
-      <span>{label}</span>
+      <span className="inline-flex h-[14px] w-[14px] items-center justify-center">{icon}</span>
+      <span className="max-w-[86px] truncate text-[11px] leading-none">{label}</span>
     </button>
   );
 }
 
 function Sep() {
-  return <div className="mx-1 h-5 w-px bg-white/5" aria-hidden />;
+  return <div className="toolbar__sep" aria-hidden />;
 }
 
 /** Bandwidth cap options shown in the toolbar selector. "0" means
@@ -126,56 +123,47 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
     .filter((t): t is NonNullable<typeof t> => Boolean(t));
 
   const anyDownloading = selTasks.some((t) => t.status === "downloading");
-  const anyPaused = selTasks.some((t) => t.status === "paused");
-  const anyFinished = selTasks.some((t) => t.status === "completed");
-  const canResume = selTasks.length > 0 && !anyDownloading;
+  const canResume =
+    selTasks.length > 0 &&
+    selTasks.every((t) => t.status !== "downloading");
 
   return (
-    <div className="border-b border-white/5 bg-surface/80">
-      <div className="flex h-11 items-center gap-0.5 overflow-x-auto px-2">
-        {/* Group 1: add */}
+    <div className="toolbar border-b border-[var(--chrome-line)]">
+      <div className="flex min-w-max h-[30px] items-center gap-[3px] overflow-x-auto px-1.5">
+        {/* Primary action */}
         <Btn
-          icon={<IconAdd size={15} />}
+          icon={<IconAdd size={13} />}
           label="Add URL"
           onClick={() => onAction("add")}
           variant="accent"
           title="Add a new download (Ctrl+N)"
         />
-        <Btn
-          icon={<IconGrabber size={15} />}
-          label="Grabber"
-          onClick={() => onAction("grabber")}
-        />
         <Sep />
 
-        {/* Group 2: control selected */}
+        {/* Download control */}
         <Btn
-          icon={<IconStart size={15} />}
-          label={anyPaused ? "Resume" : "Start"}
+          icon={<IconStart size={13} />}
+          label="Resume"
           onClick={() => onAction("start")}
           disabled={!canResume}
           variant="accent"
         />
         <Btn
-          icon={<IconPause size={15} />}
+          icon={<IconPause size={13} />}
           label="Pause"
           onClick={() => onAction("pause")}
           disabled={!anyDownloading}
         />
         <Btn
-          icon={<IconStop size={15} />}
-          label="Stop"
-          onClick={() => onAction("stop")}
-          disabled={!anyDownloading && !anyPaused}
+          icon={<IconStop size={13} />}
+          label="Stop All"
+          onClick={() => onAction("stopAll")}
+          title="Stop every active download"
         />
+        <Sep />
+
         <Btn
-          icon={<IconForceStart size={15} />}
-          label="Force Start"
-          onClick={() => onAction("forceStart")}
-          disabled={selTasks.length === 0}
-        />
-        <Btn
-          icon={<IconDelete size={15} />}
+          icon={<IconDelete size={13} />}
           label="Delete"
           onClick={() => onAction("delete")}
           disabled={selTasks.length === 0}
@@ -183,36 +171,21 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
         />
         <Sep />
 
-        {/* Group 3: stop all / clear */}
+        {/* Tools */}
         <Btn
-          icon={<IconStopAll size={15} />}
-          label="Stop All"
-          onClick={() => onAction("stopAll")}
-        />
-        <Btn
-          icon={<IconDeleteAll size={15} />}
-          label="Delete All"
-          onClick={() => onAction("deleteAll")}
-          disabled={!anyFinished && store.tasks.length === 0}
-          variant="danger"
-        />
-        <Sep />
-
-        {/* Group 4: config */}
-        <Btn
-          icon={<IconOptions size={15} />}
+          icon={<IconOptions size={13} />}
           label="Options"
           onClick={() => onAction("options")}
         />
         <Btn
-          icon={<IconScheduler size={15} />}
+          icon={<IconScheduler size={13} />}
           label="Scheduler"
           onClick={() => onAction("scheduler")}
         />
         <Btn
-          icon={<IconQueue size={15} />}
-          label="Queues"
-          onClick={() => onAction("queues")}
+          icon={<IconGrabber size={13} />}
+          label="Site Grabber"
+          onClick={() => onAction("grabber")}
         />
 
         <div className="flex-1" />

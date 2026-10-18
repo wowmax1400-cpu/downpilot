@@ -27,11 +27,15 @@ fn exact_host_wins_over_subdomain_pattern() {
     mgr.save_site(rule("example.com", "general")).unwrap();
     mgr.save_site(rule("cdn.example.com", "video")).unwrap();
     assert_eq!(
-        mgr.test_site_match("https://cdn.example.com/file.mp4").unwrap().queue,
+        mgr.test_site_match("https://cdn.example.com/file.mp4")
+            .unwrap()
+            .queue,
         "video"
     );
     assert_eq!(
-        mgr.test_site_match("https://static.example.com/img.png").unwrap().queue,
+        mgr.test_site_match("https://static.example.com/img.png")
+            .unwrap()
+            .queue,
         "general"
     );
     assert!(mgr.test_site_match("https://other.com/x.zip").is_none());
@@ -41,10 +45,18 @@ fn exact_host_wins_over_subdomain_pattern() {
 fn hostname_aware_matching_rejects_lookalikes() {
     let (mgr, _dir) = new_mgr();
     mgr.save_site(rule("example.com", "general")).unwrap();
-    assert!(mgr.test_site_match("https://notexample.com/x.zip").is_none());
-    assert!(mgr.test_site_match("https://example.com.evil.tld/x.zip").is_none());
-    assert!(mgr.test_site_match("https://www.example.com/x.zip").is_some());
-    assert!(mgr.test_site_match("https://a.b.c.example.com/x.zip").is_some());
+    assert!(mgr
+        .test_site_match("https://notexample.com/x.zip")
+        .is_none());
+    assert!(mgr
+        .test_site_match("https://example.com.evil.tld/x.zip")
+        .is_none());
+    assert!(mgr
+        .test_site_match("https://www.example.com/x.zip")
+        .is_some());
+    assert!(mgr
+        .test_site_match("https://a.b.c.example.com/x.zip")
+        .is_some());
 }
 
 #[test]
@@ -52,17 +64,24 @@ fn most_specific_parent_wins() {
     let (mgr, _dir) = new_mgr();
     mgr.save_site(rule("example.com", "general")).unwrap();
     mgr.save_site(rule("cdn.example.com", "video")).unwrap();
-    mgr.save_site(rule("static.cdn.example.com", "image")).unwrap();
+    mgr.save_site(rule("static.cdn.example.com", "image"))
+        .unwrap();
     assert_eq!(
-        mgr.test_site_match("https://static.cdn.example.com/a.png").unwrap().queue,
+        mgr.test_site_match("https://static.cdn.example.com/a.png")
+            .unwrap()
+            .queue,
         "image"
     );
     assert_eq!(
-        mgr.test_site_match("https://other.cdn.example.com/a.png").unwrap().queue,
+        mgr.test_site_match("https://other.cdn.example.com/a.png")
+            .unwrap()
+            .queue,
         "video"
     );
     assert_eq!(
-        mgr.test_site_match("https://docs.example.com/a.html").unwrap().queue,
+        mgr.test_site_match("https://docs.example.com/a.html")
+            .unwrap()
+            .queue,
         "general"
     );
 }
@@ -86,8 +105,12 @@ fn global_rule_is_fallback_only() {
 fn matching_is_case_insensitive() {
     let (mgr, _dir) = new_mgr();
     mgr.save_site(rule("Example.COM", "general")).unwrap();
-    assert!(mgr.test_site_match("https://WWW.example.com/x.zip").is_some());
-    assert!(mgr.test_site_match("https://www.EXAMPLE.com/x.zip").is_some());
+    assert!(mgr
+        .test_site_match("https://WWW.example.com/x.zip")
+        .is_some());
+    assert!(mgr
+        .test_site_match("https://www.EXAMPLE.com/x.zip")
+        .is_some());
 }
 
 #[test]
@@ -95,7 +118,9 @@ fn port_in_url_is_stripped() {
     let (mgr, _dir) = new_mgr();
     mgr.save_site(rule("example.com", "general")).unwrap();
     assert_eq!(
-        mgr.test_site_match("https://example.com:8443/x.zip").unwrap().queue,
+        mgr.test_site_match("https://example.com:8443/x.zip")
+            .unwrap()
+            .queue,
         "general"
     );
 }
@@ -114,11 +139,15 @@ fn persistence_round_trip() {
     {
         let (mgr, _rx) = DownloadManager::new(&db_path, state_dir);
         assert_eq!(
-            mgr.test_site_match("https://www.example.com/x.zip").unwrap().queue,
+            mgr.test_site_match("https://www.example.com/x.zip")
+                .unwrap()
+                .queue,
             "video"
         );
         assert_eq!(
-            mgr.test_site_match("https://other.com/x.zip").unwrap().queue,
+            mgr.test_site_match("https://other.com/x.zip")
+                .unwrap()
+                .queue,
             "fallback"
         );
     }
@@ -171,6 +200,7 @@ async fn category_and_user_agent_apply_at_insert() {
         start_immediately: false,
         browser_dedup_id: String::new(),
         skip_probe: true,
+        mirrors: Vec::new(),
     };
     let _ = mgr.add(nd).await;
     let list = mgr.list();
@@ -178,8 +208,14 @@ async fn category_and_user_agent_apply_at_insert() {
         .iter()
         .find(|t| t.url == "https://rules-test.example/foo.zip")
         .expect("row should exist");
-    assert_eq!(task.category, "other", "explicit caller category wins over site rule");
-    assert_eq!(task.queue, "general", "explicit caller queue wins over site rule");
+    assert_eq!(
+        task.category, "other",
+        "explicit caller category wins over site rule"
+    );
+    assert_eq!(
+        task.queue, "general",
+        "explicit caller queue wins over site rule"
+    );
     assert_eq!(task.save_dir, "/tmp/rules-test");
     assert_eq!(task.user_agent.as_deref(), Some("DownPilot-Test/1.0"));
 }

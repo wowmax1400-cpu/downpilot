@@ -50,6 +50,14 @@ type Row = GrabbedLink & {
 
 type SortKey = "name" | "ext" | "size" | "category";
 
+function hostnameFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "—";
+  }
+}
+
 export function SiteGrabberDialog({ open, onClose, onGrab, onAdd, queues, categories }: Props) {
   const [url, setUrl] = React.useState("");
   const [rules, setRules] = React.useState<GrabRules>(DEFAULT_RULES);
@@ -393,6 +401,9 @@ export function SiteGrabberDialog({ open, onClose, onGrab, onAdd, queues, catego
                 >
                   Size{sortArrow("size")}
                 </div>
+                <div className="batch-cell batch-cell--type">Type</div>
+                <div className="batch-cell batch-cell--domain">Domain</div>
+                <div className="batch-cell batch-cell--dest">Destination</div>
                 <div
                   className="batch-cell batch-cell--cat batch-cell--sortable"
                   onClick={() => setSort("category")}
@@ -422,6 +433,14 @@ export function SiteGrabberDialog({ open, onClose, onGrab, onAdd, queues, catego
                       </div>
                       <div className="batch-cell batch-cell--name" title={r.url}>
                         <span>{r.filename}</span>
+                        {r.source && (
+                          <span
+                            className="grab-pill grab-pill--src"
+                            title={`Extracted from the ${r.source} attribute of the page`}
+                          >
+                            {r.source}
+                          </span>
+                        )}
                         {r.matched && (
                           <span className="grab-pill" title={r.matched}>
                             {r.matched}
@@ -431,6 +450,20 @@ export function SiteGrabberDialog({ open, onClose, onGrab, onAdd, queues, catego
                       <div className="batch-cell batch-cell--ext">.{r.ext}</div>
                       <div className="batch-cell batch-cell--size">
                         {r.size > 0 ? formatBytes(r.size) : "—"}
+                      </div>
+                      <div className="batch-cell batch-cell--type" title={r.content_type ?? undefined}>
+                        {r.content_type ?? "—"}
+                      </div>
+                      <div className="batch-cell batch-cell--domain" title={r.url}>
+                        {hostnameFromUrl(r.url)}
+                      </div>
+                      <div className="batch-cell batch-cell--dest" title={r.save_dir || "Use category/site rule destination"}>
+                        <input
+                          className="input input--bare"
+                          value={r.save_dir}
+                          placeholder="(rule/category)"
+                          onChange={(e) => setRow(i, { save_dir: e.target.value })}
+                        />
                       </div>
                       <div className="batch-cell batch-cell--cat">
                         <select
