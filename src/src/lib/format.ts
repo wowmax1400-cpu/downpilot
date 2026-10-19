@@ -71,6 +71,19 @@ export function formatDateTime(ts: number): string {
   });
 }
 
+/** Compact date+time for dense grid cells (IDM-style): "Sep 01 21:56".
+ *  Deliberately omits the year and the AM/PM suffix so the "Last Try"
+ *  column stays single-line at 12px in the dense table. */
+export function formatDateTimeShort(ts: number): string {
+  if (!ts || !isFinite(ts) || ts <= 0) return "—";
+  const d = new Date(ts * 1000);
+  const mon = d.toLocaleDateString(undefined, { month: "short" });
+  const day = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${mon} ${day} ${hh}:${mm}`;
+}
+
 export function formatDuration(secs: number | null | undefined): string {
   return formatElapsed(secs);
 }

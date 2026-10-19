@@ -20,6 +20,7 @@ import {
   formatEta,
   formatDate,
   formatDateTime,
+  formatDateTimeShort,
   statusLabel,
   domainOf,
 } from "../lib/format";
@@ -691,10 +692,10 @@ function renderCell(
         ? t.completed_at
         : t.last_resumed_at ?? t.started_at ?? t.created_at ?? t.updated_at;
       const label =
-        ts ? formatDateTime(ts) : "—";
+        ts ? formatDateTimeShort(ts) : "—";
       return (
         <div
-          className={numCell}
+          className={`${numCell} truncate`}
           title={ts ? `Last try: ${formatDateTime(ts)}` : "No last try recorded"}
         >
           {label}

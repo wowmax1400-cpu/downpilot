@@ -315,27 +315,42 @@ export function useDownloads() {
   }, []);
 
   const refreshAux = useCallback(async () => {
+    // allSettled, not all: a single failing aux call (e.g. scheduler
+    // status) used to reject the whole batch, leaving queues AND
+    // categories empty even though the DB has both ("No queues yet"
+    // bug). Each call now applies independently; failures warn so the
+    // log names the culprit instead of silently blanking the sidebar.
+    const [qR, cR, stR, apR, sitesR, schedR] = await Promise.allSettled([
+      api.listQueues(),
+      api.listCategories(),
+      api.listSchedules(),
+      api.activeProfiles(),
+      api.listSites(),
+      api.schedulerStatus(),
+    ]);
+    const warn = (name: string, r: PromiseSettledResult<unknown>) => {
+      if (r.status === "rejected")
+        console.warn(`[refreshAux] ${name} failed:`, r.reason);
+    };
+    warn("listQueues", qR);
+    warn("listCategories", cR);
+    warn("listSchedules", stR);
+    warn("activeProfiles", apR);
+    warn("listSites", sitesR);
+    warn("schedulerStatus", schedR);
+    if (qR.status === "fulfilled") setQueues(qR.value);
+    if (cR.status === "fulfilled") setCategories(cR.value);
+    if (sitesR.status === "fulfilled") setSites(sitesR.value);
+    if (stR.status === "fulfilled") setSchedules(stR.value);
+    if (apR.status === "fulfilled") setActiveProfiles(apR.value);
+    // Phase 3B: live scheduler snapshot drives the queue details
+    // panel and the status bar.
+    if (schedR.status === "fulfilled") setSchedulerStatus(schedR.value);
     try {
-      const [q, c, st, ap, sites, sched] = await Promise.all([
-        api.listQueues(),
-        api.listCategories(),
-        api.listSchedules(),
-        api.activeProfiles(),
-        api.listSites(),
-        api.schedulerStatus(),
-      ]);
-      setQueues(q);
-      setCategories(c);
-      setSites(sites);
-      setSchedules(st);
-      setActiveProfiles(ap);
-      // Phase 3B: live scheduler snapshot drives the queue details
-      // panel and the status bar.
-      setSchedulerStatus(sched);
       // Refresh effective speeds for every queue we know about.
       const map: Record<string, number> = {};
       await Promise.all(
-        q.map(async (qq) => {
+        (qR.status === "fulfilled" ? qR.value : []).map(async (qq) => {
           map[qq.name] = await api.effectiveQueueSpeedKbps(qq.name);
         })
       );
@@ -858,14 +873,19 @@ export function useDownloads() {
       if (t.status !== "completed" && t.status !== "cancelled")
         c.unfinished = (c.unfinished ?? 0) + 1;
       else if (t.status === "completed") c.finished = (c.finished ?? 0) + 1;
-      if (t.status === "failed") c.failed = (c.failed ?? 0) + 1;
-      if (t.status === "paused" || t.status === "stopped") c.paused = (c.paused ?? 0) + 1;
       if (t.status === "scheduled") c.scheduled = (c.scheduled ?? 0) + 1;
       // Per-category badge counts. Sidebar renders `cat:<name>` for
       // both built-in and user categories (extension-derived, i.e. the
       // engine's guess_category output).
       c[`cat:${t.category}`] = (c[`cat:${t.category}`] ?? 0) + 1;
     }
+    // Derived buckets computed AFTER the tally loop. c.paused is
+    // already the raw "paused" tally from c[t.status] above, so
+    // incrementing it inside the loop double-counted every paused row
+    // (2 paused rows rendered as "Paused: 4" in the status bar). Fold
+    // "stopped" into the paused bucket and normalise "failed" instead.
+    c.paused = (c.paused ?? 0) + (c.stopped ?? 0);
+    c.failed = c.failed ?? 0;
     return c;
   }, [tasks]);
 
