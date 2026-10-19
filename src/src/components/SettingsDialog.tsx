@@ -757,17 +757,28 @@ export function SettingsDialog({ store, onClose }: Props) {
           key: "on_complete",
           label: "Default action",
           type: "select",
+          // Destructive actions (Shutdown / Suspend / Hibernate) require
+          // an extra "dangerous_actions" toggle in the same dialog; the
+          // engine refuses to run them otherwise.
           options: [
             "none",
             "open_file",
             "open_folder",
             "notification",
+            "play_sound",
             "run_command",
             "start_queue",
+            "stop_queue",
             "shutdown",
             "suspend",
             "hibernate",
           ],
+        },
+        {
+          key: "dangerous_actions",
+          label:
+            "Allow Shutdown / Suspend / Hibernate on completion (highly destructive)",
+          type: "toggle",
         },
       ],
     },

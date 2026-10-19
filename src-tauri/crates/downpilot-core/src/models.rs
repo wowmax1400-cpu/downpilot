@@ -170,20 +170,6 @@ impl CompletionAction {
             CompletionAction::Hibernate => "hibernate",
         }
     }
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "open_file" => CompletionAction::OpenFile,
-            "open_folder" => CompletionAction::OpenFolder,
-            "notification" => CompletionAction::Notification,
-            "play_sound" => CompletionAction::PlaySound,
-            "run_command" => CompletionAction::RunCommand,
-            "start_queue" => CompletionAction::StartQueue,
-            "shutdown" => CompletionAction::Shutdown,
-            "suspend" => CompletionAction::Suspend,
-            "hibernate" => CompletionAction::Hibernate,
-            _ => CompletionAction::None,
-        }
-    }
 }
 
 /// A download task as stored in SQLite and shown in the UI.
@@ -210,6 +196,10 @@ pub struct DownloadTask {
     /// echoed in NMH responses. **Future hardening:** encrypt at rest
     /// using a machine-scoped key once the keyring backend is selected.
     pub cookies: Option<String>,
+    /// Explicit per-download proxy override. `None` inherits the matching
+    /// Site Rule, queue, global proxy, or direct connection.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
     pub category: String,
     pub expected_sha256: Option<String>,
     pub error: Option<String>,
@@ -239,9 +229,64 @@ pub struct DownloadTask {
     pub error_code: i32,
     pub error_category: String,
     pub on_complete: String,
+    /// Phase 3B: download-level priority inside the owning queue.
+    /// High = +10, Normal = 0, Low = -10. Respected by
+    /// `govern_concurrency` after queue priority but before
+    /// creation time. Persisted via `Db::set_priority`.
+    pub priority: i32,
+    /// Phase 3B: true after the user explicitly pressed Force Start
+    /// on this task. The UI shows a "Force Started" badge while it
+    /// is set, but it does NOT change the task's permanent `priority`
+    /// field — once the task transitions out of Downloading
+    /// (finished / cancelled / paused for any reason), the flag is
+    /// cleared so a future auto-promotion respects normal ordering.
+    #[serde(default)]
+    pub force_started: bool,
+    /// Alternate source URLs for the same object (mirrors). When the
+    /// primary URL fails with a retryable transport/HTTP error the
+    /// engine rotates to the next mirror and retries from the bytes
+    /// already on disk. Empty = single-source download. Never contains
+    /// credentials — the sanitizer strips userinfo before persistence.
+    #[serde(default)]
+    pub mirrors: Vec<String>,
+    /// Index into `[url] + mirrors` of the source currently in use.
+    /// 0 = the primary URL. Persisted so a failover survives a restart
+    /// and so resume never mixes bytes from two different servers.
+    #[serde(default)]
+    pub mirror_index: i32,
 }
 
 impl DownloadTask {
+    /// Every source for this task in rotation order: the primary URL
+    /// first, then each mirror. Empty/duplicate entries are skipped so a
+    /// malformed payload can't stall the rotation.
+    pub fn sources(&self) -> Vec<String> {
+        let mut out = Vec::with_capacity(self.mirrors.len() + 1);
+        for u in std::iter::once(&self.url).chain(self.mirrors.iter()) {
+            let t = u.trim();
+            if !t.is_empty() && !out.iter().any(|e: &String| e == t) {
+                out.push(t.to_string());
+            }
+        }
+        out
+    }
+
+    /// URL of the source at the persisted rotation index, falling back
+    /// to the primary when the index is out of range (e.g. the user
+    /// edited the mirror list while the task was paused).
+    pub fn active_url(&self) -> String {
+        let sources = self.sources();
+        let idx = self.mirror_index.max(0) as usize;
+        sources.get(idx).cloned().unwrap_or_else(|| self.url.clone())
+    }
+
+    /// Advance to the next source. Returns the new URL when another
+    /// mirror is available, `None` when the rotation is exhausted.
+    pub fn next_source(&self) -> Option<(i32, String)> {
+        let sources = self.sources();
+        let next = self.mirror_index.max(0) as usize + 1;
+        sources.get(next).cloned().map(|u| (next as i32, u))
+    }
     pub fn progress_ratio(&self) -> f64 {
         if self.total_size > 0 {
             (self.downloaded as f64 / self.total_size as f64).clamp(0.0, 1.0)
@@ -275,6 +320,7 @@ impl DownloadTask {
             referer: None,
             user_agent: None,
             cookies: None,
+            proxy_url: None,
             category: "other".to_string(),
             expected_sha256: None,
             error: None,
@@ -303,6 +349,10 @@ impl DownloadTask {
             error_code: 0,
             error_category: String::new(),
             on_complete: String::new(),
+            priority: 0,
+            force_started: false,
+            mirrors: Vec::new(),
+            mirror_index: 0,
         }
     }
 }
@@ -319,6 +369,9 @@ pub struct NewDownload {
     pub referer: Option<String>,
     pub user_agent: Option<String>,
     pub cookies: Option<String>,
+    /// Explicit per-download proxy override. Omit to inherit configuration.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
     pub expected_sha256: Option<String>,
     pub category: Option<String>,
     pub queue: Option<String>,
@@ -331,6 +384,11 @@ pub struct NewDownload {
     pub on_complete: Option<String>,
     #[serde(default = "default_true")]
     pub start_immediately: bool,
+    /// Phase 3B: download-level priority (High=10, Normal=0, Low=-10).
+    /// Falls back to the queue's default ordering (creation time) when
+    /// `None`.
+    #[serde(default)]
+    pub priority: Option<i32>,
     /// Opaque browser-side handle used to dedupe: if a Chrome retry fires
     /// the same `chrome.downloads.onCreated` event with the same `browser_id`,
     /// the engine ignores the second insert. Empty string = not from a browser.
@@ -344,6 +402,12 @@ pub struct NewDownload {
     /// still wants to attempt the download.
     #[serde(default)]
     pub skip_probe: bool,
+    /// Alternate source URLs for the same object (mirrors). Added on
+    /// top of `url` at enqueue time; the engine persists them and
+    /// rotates through them on retryable failure. Never contains
+    /// credentials — the sanitizer strips userinfo before persistence.
+    #[serde(default)]
+    pub mirrors: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -354,13 +418,43 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineEvent {
-    Added { task: DownloadTask },
-    Progress { id: i64, downloaded: i64, total: i64, speed_bps: f64 },
-    StatusChanged { id: i64, status: Status, error: Option<String> },
-    Removed { id: i64 },
-    Finished { task: DownloadTask },
-    Notify { level: String, title: String, body: String },
-    QueueChanged { queue: DownloadQueue },
+    Added {
+        task: DownloadTask,
+    },
+    Progress {
+        id: i64,
+        downloaded: i64,
+        total: i64,
+        speed_bps: f64,
+    },
+    /// Per-chunk snapshots for the IDM-style segment progress dialog.
+    /// `idx` is the chunk index (0..segments), `bytes` is bytes transferred
+    /// by that chunk since start/resume, `size` is the chunk's total size.
+    SegmentProgress {
+        id: i64,
+        idx: usize,
+        bytes: u64,
+        size: u64,
+    },
+    StatusChanged {
+        id: i64,
+        status: Status,
+        error: Option<String>,
+    },
+    Removed {
+        id: i64,
+    },
+    Finished {
+        task: DownloadTask,
+    },
+    Notify {
+        level: String,
+        title: String,
+        body: String,
+    },
+    QueueChanged {
+        queue: DownloadQueue,
+    },
 }
 
 /// One selectable media format returned by yt-dlp analysis.
@@ -443,6 +537,11 @@ pub struct AppSettings {
     pub auto_organize: Option<bool>,
     pub confirm_exit: Option<bool>,
     pub sound_on_complete: Option<bool>,
+    /// Safety opt-in for the destructive system-level completion actions
+    /// (shutdown / suspend / hibernate). The engine refuses to run them
+    /// unless this is true. Default-false so a fresh install cannot
+    /// accidentally power off the user's machine.
+    pub dangerous_actions: Option<bool>,
 }
 
 /// A download queue.
@@ -459,6 +558,14 @@ pub struct DownloadQueue {
     pub schedule_end: String,
     pub on_complete: String,
     pub on_complete_command: String,
+    /// Phase 3B: queue chaining. When this queue empties, start the
+    /// named queue (if it exists, if it is enabled, and if the user's
+    /// completion-action settings permit it). Empty string = no chain.
+    /// Stored alongside the existing per-queue `on_complete` action —
+    /// the completion path runs the on_complete action first, then
+    /// promotes the chain target.
+    #[serde(default)]
+    pub next_queue: String,
     // Per-queue authentication overlay. Empty/None means inherit global.
     // Sensitive values (passwords) are stored in the OS keyring when
     // available; the boolean fields here are non-secret metadata.
@@ -492,6 +599,7 @@ impl Default for DownloadQueue {
             schedule_end: "23:59".into(),
             on_complete: "none".into(),
             on_complete_command: String::new(),
+            next_queue: String::new(),
             proxy_url: String::new(),
             cookies: String::new(),
             user_agent: String::new(),
@@ -561,14 +669,14 @@ pub struct SiteRule {
 pub struct Schedule {
     pub id: i64,
     pub name: String,
-    pub queue: String,            // legacy single-queue target
+    pub queue: String, // legacy single-queue target
     pub enabled: bool,
-    pub kind: String,             // "daily" | "once" | "weekly"
+    pub kind: String, // "daily" | "once" | "weekly"
     pub start_time: String,
     pub end_time: String,
-    pub days: i32,                // bitmask Sun..Sat; 127 = every day
-    pub action: String,           // "start" | "stop" | "set_bw" | "bandwidth"
-    pub bandwidth_kbps: i64,      // legacy single-queue kbps
+    pub days: i32,           // bitmask Sun..Sat; 127 = every day
+    pub action: String,      // "start" | "stop" | "set_bw" | "bandwidth"
+    pub bandwidth_kbps: i64, // legacy single-queue kbps
     /// JSON-encoded map of queue_name -> kbps. Missing keys = no override.
     /// When a schedule activates and contains overrides, the engine
     /// remembers each affected queue's previous speed and restores it
@@ -606,12 +714,42 @@ impl Default for Schedule {
 
 /// Built-in download categories (seeded on first run).
 pub const BUILTIN_CATEGORIES: &[(&str, &str, &str, &str)] = &[
-    ("video", "Video", ".mp4,.mkv,.webm,.avi,.mov,.wmv,.flv,.m4v,.mpg,.ts", "#f87171"),
-    ("music", "Music", ".mp3,.flac,.wav,.ogg,.m4a,.aac,.opus", "#34d399"),
-    ("compressed", "Compressed", ".zip,.rar,.7z,.tar,.gz,.xz,.bz2,.zst,.iso", "#fbbf24"),
-    ("documents", "Documents", ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.odt,.epub,.csv", "#38bdf8"),
-    ("programs", "Programs", ".exe,.msi,.deb,.rpm,.AppImage,.flatpak,.dmg,.apk,.run,.sh", "#a855f7"),
-    ("images", "Images", ".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.ico", "#22d3ee"),
+    (
+        "video",
+        "Video",
+        ".mp4,.mkv,.webm,.avi,.mov,.wmv,.flv,.m4v,.mpg,.ts",
+        "#f87171",
+    ),
+    (
+        "music",
+        "Music",
+        ".mp3,.flac,.wav,.ogg,.m4a,.aac,.opus",
+        "#34d399",
+    ),
+    (
+        "compressed",
+        "Compressed",
+        ".zip,.rar,.7z,.tar,.gz,.xz,.bz2,.zst,.iso",
+        "#fbbf24",
+    ),
+    (
+        "documents",
+        "Documents",
+        ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.odt,.epub,.csv",
+        "#38bdf8",
+    ),
+    (
+        "programs",
+        "Programs",
+        ".exe,.msi,.deb,.rpm,.AppImage,.flatpak,.dmg,.apk,.run,.sh",
+        "#a855f7",
+    ),
+    (
+        "images",
+        "Images",
+        ".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.ico",
+        "#22d3ee",
+    ),
     ("other", "Other", "", "#64748b"),
 ];
 
@@ -640,6 +778,14 @@ pub struct GrabbedLink {
     /// ("include", "ext", "mime", "size", "default", "excluded:<rule>").
     /// Empty when no rules were applied.
     pub matched: String,
+    /// Phase 3C: which HTML attribute the link was extracted from.
+    /// `href` for `<a>` / `<link>`, `src` for `<img>` / `<script>`
+    /// / `<video>` / `<source>` / `<iframe>`, `meta` for
+    /// `<meta http-equiv="refresh">` and similar. The UI shows a
+    /// small chip next to the filename so the user can tell where
+    /// the link came from.
+    #[serde(default)]
+    pub source: String,
 }
 
 /// User-defined filter for `Download Grabber` results.
@@ -676,21 +822,57 @@ impl GrabRules {
     pub fn sensible_defaults() -> Self {
         Self {
             include_extensions: vec![
-                "zip".into(), "7z".into(), "rar".into(),
-                "tar".into(), "gz".into(), "bz2".into(), "xz".into(),
+                "zip".into(),
+                "7z".into(),
+                "rar".into(),
+                "tar".into(),
+                "gz".into(),
+                "bz2".into(),
+                "xz".into(),
                 "iso".into(),
-                "mp4".into(), "mkv".into(), "webm".into(), "avi".into(), "mov".into(),
-                "mp3".into(), "flac".into(), "wav".into(), "m4a".into(), "ogg".into(),
-                "pdf".into(), "epub".into(), "doc".into(), "docx".into(), "txt".into(),
-                "exe".into(), "msi".into(), "apk".into(), "deb".into(), "rpm".into(),
-                "appimage".into(), "dmg".into(), "sh".into(),
+                "mp4".into(),
+                "mkv".into(),
+                "webm".into(),
+                "avi".into(),
+                "mov".into(),
+                "mp3".into(),
+                "flac".into(),
+                "wav".into(),
+                "m4a".into(),
+                "ogg".into(),
+                "pdf".into(),
+                "epub".into(),
+                "doc".into(),
+                "docx".into(),
+                "txt".into(),
+                "exe".into(),
+                "msi".into(),
+                "apk".into(),
+                "deb".into(),
+                "rpm".into(),
+                "appimage".into(),
+                "dmg".into(),
+                "sh".into(),
             ],
             exclude_extensions: vec![
-                "css".into(), "js".into(), "mjs".into(),
-                "png".into(), "jpg".into(), "jpeg".into(), "gif".into(),
-                "webp".into(), "svg".into(), "ico".into(),
-                "woff".into(), "woff2".into(), "ttf".into(), "eot".into(),
-                "html".into(), "htm".into(), "json".into(), "xml".into(),
+                "css".into(),
+                "js".into(),
+                "mjs".into(),
+                "png".into(),
+                "jpg".into(),
+                "jpeg".into(),
+                "gif".into(),
+                "webp".into(),
+                "svg".into(),
+                "ico".into(),
+                "woff".into(),
+                "woff2".into(),
+                "ttf".into(),
+                "eot".into(),
+                "html".into(),
+                "htm".into(),
+                "json".into(),
+                "xml".into(),
             ],
             include_mime: vec![],
             exclude_mime: vec!["text/css".into(), "application/javascript".into()],
@@ -714,7 +896,6 @@ pub struct ProbeInfo {
     pub supports_resume: bool,
 }
 
-
 /// A snapshot of which schedules are currently in effect, returned
 /// to the UI so it can render an "active profile" indicator without
 /// re-implementing the time-window matching logic on the frontend.
@@ -727,6 +908,52 @@ pub struct ActiveProfile {
     /// by this profile.
     pub affected_queues: Vec<String>,
 }
+
+/// Phase 3B: per-queue live status snapshot returned by
+/// `DownloadManager::scheduler_status`. The UI uses this to render
+/// the queue details panel without needing to recompute bandwidth,
+/// scheduling windows, or the precedence order itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueStatus {
+    pub queue: String,
+    pub label: String,
+    pub active_downloads: usize,
+    pub queued_downloads: usize,
+    pub max_simultaneous: i32,
+    /// Speed the user configured for this queue (kbps).
+    pub configured_speed_kbps: u64,
+    /// Speed the engine is currently enforcing (kbps). Equals
+    /// `configured_speed_kbps` when no schedule is overriding it.
+    pub current_speed_kbps: u64,
+    /// If a schedule is currently overriding this queue, this is
+    /// the schedule's id; otherwise `None`.
+    pub active_schedule_id: Option<i64>,
+    /// Whether the queue is currently inside its own
+    /// `schedule_enabled` window. Distinct from a bandwidth
+    /// profile override — a queue can have a schedule that just
+    /// gates start/stop without touching bandwidth.
+    pub in_own_schedule_window: bool,
+    pub enabled: bool,
+    pub priority: i32,
+    /// Whether at least one queued task has a non-empty auth_ref
+    /// (i.e. the queue is configured for credentials). The UI
+    /// shows a small badge next to the queue name.
+    pub auth_configured: bool,
+}
+
+/// Phase 3B: live snapshot of the scheduler returned by
+/// `DownloadManager::scheduler_status`. Designed for the status bar
+/// and the queue details panel: a single struct the UI can render
+/// without further server round-trips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerStatus {
+    pub active_profiles: Vec<ActiveProfile>,
+    pub queues: Vec<QueueStatus>,
+    pub global_max_simultaneous: u32,
+    pub global_active: usize,
+    pub global_queued: usize,
+    pub time_now: String,
+}
 /// Parsed chunk-range response header helper.
 pub fn parse_content_range_total(value: &str) -> Option<i64> {
     let total = value.rsplit('/').next()?;
@@ -734,4 +961,72 @@ pub fn parse_content_range_total(value: &str) -> Option<i64> {
         return None;
     }
     total.parse().ok()
+}
+
+/// Extract the *start offset* from a `Content-Range` response header
+/// (`bytes {start}-{end}/{total}`). Used to verify that a server actually
+/// resumed from the byte offset we asked for before we append to the
+/// partial file — appending blindly would duplicate or skip bytes.
+pub fn parse_content_range_start(value: &str) -> Option<u64> {
+    let spec = value.trim().strip_prefix("bytes")?.trim_start();
+    let spec = spec.trim_start_matches([' ', '\t']);
+    let range = spec.split('/').next()?.split('-').next()?;
+    range.trim().parse().ok()
+}
+
+/// Does this error text describe an abrupt, transient transport
+/// termination — the peer (or network) dropped an otherwise valid
+/// connection mid-transfer? Covers the reqwest/hyper/rustls wording for:
+/// unexpected EOF, missing TLS close_notify ("peer closed connection
+/// without sending TLS close_notify"), hyper's IncompleteMessage
+/// ("connection closed before message completed"), and TCP resets.
+/// These are retryable; certificate and TLS-configuration failures are
+/// NOT (see `is_cert_failure_msg`).
+pub fn is_abrupt_close_msg(s: &str) -> bool {
+    let e = s.to_ascii_lowercase();
+    e.contains("peer closed connection")
+        || e.contains("unexpected eof")
+        || e.contains("connection closed before message completed")
+        || e.contains("incomplete message")
+        || e.contains("end of file before message length")
+        || e.contains("connection reset")
+        || e.contains("broken pipe")
+}
+
+/// Does this error text describe a TLS failure that retrying cannot fix —
+/// certificate validation failure, hostname mismatch, expired/revoked
+/// certificate? Deliberately narrow: generic "ssl"/"tls" strings that do
+/// NOT match here are classified as plain "tls" errors.
+pub fn is_cert_failure_msg(s: &str) -> bool {
+    let e = s.to_ascii_lowercase();
+    e.contains("invalid peer certificate")
+        || e.contains("invalid certificate")
+        || e.contains("certificate expired")
+        || e.contains("certificate revoked")
+        || e.contains("unknown issuer")
+        || e.contains("not valid for name")
+        || e.contains("certificate verify")
+        || e.contains("certificate unknown")
+}
+
+/// Result of a one-shot checksum verification.
+///
+/// `algorithm` is always `"sha256"` for now; the field exists so the
+/// frontend can render the algorithm name without hardcoding it.
+///
+/// `computed` is the lowercase hex digest of the file as it sits on
+/// disk. `expected` is whatever the user entered (the `expected_sha256`
+/// column); empty string means "no expected value, just recorded the
+/// actual digest".
+///
+/// `matches` is `Some(true)` if the computed digest matched the expected
+/// one (case-insensitive), `Some(false)` if it didn't, or `None` if
+/// there was no expected digest to compare against.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChecksumResult {
+    pub algorithm: String,
+    pub computed: String,
+    pub expected: String,
+    pub matches: Option<bool>,
+    pub file_size: u64,
 }

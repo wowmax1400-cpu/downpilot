@@ -18,6 +18,8 @@ type Props = {
   onHistory: () => void;
   onAbout: () => void;
   onOpenProps: () => void;
+  onToggleDetails: () => void;
+  detailsOpen: boolean;
   onFocusSearch?: () => void;
 };
 
@@ -188,6 +190,8 @@ export function MenuBar(props: Props) {
             { label: "Finished", onClick: () => store.setSidebarKey({ kind: "status", value: "finished" }) },
             { label: "Paused", onClick: () => store.setSidebarKey({ kind: "status", value: "paused" }) },
             { label: "Errors", onClick: () => store.setSidebarKey({ kind: "status", value: "failed" }) },
+            { sep: true },
+            { label: props.detailsOpen ? "Hide Details" : "Show Details", onClick: props.onToggleDetails },
           ]}
         />
         <Menu
@@ -268,7 +272,8 @@ function SearchBox({ store }: { store: DownloadsStore }) {
           setValue(e.target.value);
           store.setSearch(e.target.value);
         }}
-        placeholder="Search filename, URL, domain… (Ctrl+F)"
+        placeholder="Search downloads…"
+        title="Search supports: bare text, since:YYYY-MM-DD, until:YYYY-MM-DD, today, week"
         className="menubar__search-input"
       />
       {value && (

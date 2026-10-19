@@ -267,36 +267,122 @@ async function decide(url) {
 }
 
 // ---- Duplicate prevention --------------------------------------------------
-// Once we hand a download off to DownPilot, Chrome retries the same URL
-// fire a fresh `onCreated` event. We keep a short-lived set of seen
-// browser ids + URLs to suppress the second import. Cleared after a minute.
-const seenCaptures = new Map(); // key -> ts
-function markCaptured(key) {
-  seenCaptures.set(key, Date.now());
+// Once we hand a download off to DownPilot (or the user dismisses the ask),
+// Chrome may re-fire `onCreated` for the same URL — Chrome retries, and on
+// browser restart Chrome restores interrupted downloads, firing onCreated
+// AGAIN with a NEW download id. An in-memory set forgets all of that, so
+// the user re-got the ask/capture prompt after every reboot. State is now
+// PERSISTED to chrome.storage.local, keyed by URL (stable across restarts;
+// the browser download id is not). Entries expire after SEEN_TTL_MS.
+const SEEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const seenCaptures = new Map(); // url -> ts (mirrored to chrome.storage)
+let seenLoaded = false;
+let seenLoadStarted = false;
+// onCreated events that arrived before storage finished loading. Chrome
+// restores interrupted downloads right at browser startup, i.e. exactly
+// when this race happens, so we must not drop them on the floor.
+const pendingOnCreated = [];
+function onSeenLoaded() {
+  seenLoaded = true;
+  // Belt-and-braces for the reboot loop: Chrome restores interrupted
+  // downloads at startup. Any in-flight/restored download that we already
+  // have a record for gets erased from Chrome's queue so it can't keep
+  // re-firing onCreated across future reboots. Downloads we've never seen
+  // are left alone (they belong to this session's normal flow).
+  try {
+    chrome.downloads.search({}, (items) => {
+      for (const it of items || []) {
+        if (!it.url) continue;
+        if (wasCaptured(it.url)) {
+          // Only clean up restored artifacts, not actively downloading
+          // items the user manually started this session.
+          if (it.state === "interrupted" || it.paused) {
+            chrome.downloads.cancel(it.id, () => {
+              chrome.downloads.erase({ id: it.id }, () => {});
+            });
+          }
+        }
+      }
+    });
+  } catch { /* downloads API unavailable — dedup alone still prevents prompts */ }
+  const queued = pendingOnCreated.splice(0);
+  for (const item of queued) handleCreated(item);
 }
-function wasCaptured(key) {
-  const t = seenCaptures.get(key);
+function ensureSeenLoaded() {
+  if (seenLoadStarted) return;
+  seenLoadStarted = true;
+  try {
+    chrome.storage?.local.get?.(["seenCaptures"], (v) => {
+      if (v && v.seenCaptures && typeof v.seenCaptures === "object") {
+        for (const [k, t] of Object.entries(v.seenCaptures)) {
+          if (typeof t === "number") seenCaptures.set(k, t);
+        }
+      }
+      onSeenLoaded();
+    });
+  } catch {
+    // storage unavailable — degrade to in-memory-only dedup
+    onSeenLoaded();
+  }
+}
+ensureSeenLoaded();
+
+let persistTimer = null;
+function persistSeen() {
+  // Coalesce bursts of writes into one storage.local.set.
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    try {
+      chrome.storage?.local?.set?.({
+        seenCaptures: Object.fromEntries(seenCaptures),
+      });
+    } catch { /* degrade to in-memory */ }
+  }, 250);
+}
+
+function pruneSeen() {
+  const now = Date.now();
+  for (const [k, t] of seenCaptures) {
+    if (now - t > SEEN_TTL_MS) seenCaptures.delete(k);
+  }
+}
+
+function markCaptured(url) {
+  seenCaptures.set(url, Date.now());
+  pruneSeen();
+  persistSeen();
+}
+
+function wasCaptured(url) {
+  const t = seenCaptures.get(url);
   if (!t) return false;
-  if (Date.now() - t > 60_000) {
-    seenCaptures.delete(key);
+  if (Date.now() - t > SEEN_TTL_MS) {
+    seenCaptures.delete(url);
+    persistSeen();
     return false;
   }
   return true;
 }
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, t] of seenCaptures) {
-    if (now - t > 60_000) seenCaptures.delete(k);
-  }
-}, 15_000);
 
 // ---- Chrome download takeover ---------------------------------------------
 chrome.downloads.onCreated.addListener((item) => {
   if (!item || !item.url) return;
   if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
 
-  const key = `b${item.id}|${item.url}`;
-  if (wasCaptured(key)) return;
+  // Startup race: Chrome restores interrupted downloads the moment the
+  // browser (re)starts, which is exactly when the persisted dedup state
+  // is still being loaded. Queue until it is, then decide — otherwise a
+  // rebooted session would re-prompt before the guard is in place.
+  if (!seenLoaded) {
+    pendingOnCreated.push(item);
+    return;
+  }
+  handleCreated(item);
+});
+
+function handleCreated(item) {
+  if (wasCaptured(item.url)) return;
 
   decide(item.url).then((verdict) => {
     if (verdict === "skip") return;
@@ -306,42 +392,37 @@ chrome.downloads.onCreated.addListener((item) => {
       askUser(item);
     }
   });
-});
+}
 
 function takeover(item, opts) {
   opts = opts || {};
-  // Cancel Chrome's own download so we don't double-download.
-  try {
-    chrome.downloads.cancel(item.id, () => {
-      chrome.downloads.erase({ id: item.id }, () => {});
-    });
-  } catch (e) {
-    // Already gone — fine.
-  }
-  markCaptured(`b${item.id}|${item.url}`);
-
+  // Pause Chrome's download while DownPilot decides whether it accepted the
+  // handoff. This keeps the original browser copy recoverable on failure.
+  try { chrome.downloads.pause(item.id, () => {}); } catch (e) { /* already gone */ }
+  const resumeChrome = () => {
+    try { chrome.downloads.resume(item.id, () => {}); } catch (e) { /* already gone */ }
+  };
   sendMessage({
     type: "submit_browser_download",
     url: item.url,
     filename: item.filename || undefined,
     referer: item.referrer || undefined,
     user_agent: item.userAgent || undefined,
-    cookies: undefined, // Never forwarded by default; ask-mode would
-                        // attach it only if the user explicitly opted in.
+    cookies: undefined,
     browser_id: String(item.id),
     try_download_anyway: !!opts.tryAnyway,
   })
     .then((resp) => {
+      chrome.downloads.cancel(item.id, () => {
+        chrome.downloads.erase({ id: item.id }, () => {});
+      });
+      markCaptured(item.url);
       const id = resp && resp.data ? resp.data.id : null;
       notify("Download captured", item.filename || item.url);
-      // Stash the mapping for the popup / "Open in DownPilot" link.
       capturedByUrl.set(item.url, id);
     })
     .catch(() => {
-      // App rejected the handoff (network, dedup race, etc.).
-      // Fall back to letting Chrome continue so the user still gets
-      // the file. (Don't try to re-cancel — the user might already
-      // have clicked through.)
+      resumeChrome();
       notify("DownPilot didn't accept the download", "Continuing in Chrome");
     });
 }
@@ -399,6 +480,12 @@ function askUser(item) {
         buttons,
         priority: 1,
       });
+      // One prompt per URL, ever: if the worker dies (MV3 suspension) or
+      // the machine reboots before the user clicks, Chrome re-fires
+      // onCreated on restore and the notification would nag again on
+      // every boot. Marking at display time means a re-fired event is
+      // treated like "Ignore" — the Chrome download continues untouched.
+      markCaptured(item.url);
       askCallbacks.set(id, probeItem);
     })
     .catch(() => {
@@ -417,6 +504,7 @@ function askUser(item) {
         ],
         priority: 1,
       });
+      markCaptured(item.url);
       askCallbacks.set(id, item);
     });
 }
@@ -475,8 +563,9 @@ chrome.notifications.onButtonClicked.addListener((notifId, btnIdx) => {
     }
     takeover(item, { tryAnyway: item._probeFailed === true });
   } else {
-    // Ignore. Remember the url so a Chrome retry doesn't re-prompt.
-    markCaptured(`b${item.id}|${item.url}`);
+    // Ignore. Remember the URL persistently so neither a Chrome retry
+    // nor a browser restart re-prompts for this download.
+    markCaptured(item.url);
   }
 });
 

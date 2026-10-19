@@ -2,8 +2,8 @@
 //! server with Range support. Verifies multi-threaded download + file
 //! integrity + SQLite persistence + pause/resume/stop/retry/restart.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use downpilot_core::engine::DownloadManager;
@@ -12,12 +12,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 const SIZE: usize = 1024 * 1024; // 1 MiB payload
-const BIG_SIZE: usize = 128 * 1024 * 1024; // 128 MiB — large enough that 100ms isn't enough to finish
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 /// Behaviour switch for the test server. Lets us inject failures into specific
 /// downloader actions (probe, ranged GET, full GET).
 #[derive(Clone, Copy)]
+#[allow(dead_code)] // behaviour palette is shared across tests; not all variants fire in every run
 enum ServerBehaviour {
     /// Always serve 206 (range) / 200 (full) with the right bytes.
     Ok,
@@ -39,8 +39,10 @@ enum ServerBehaviour {
 struct TestServer {
     addr: std::net::SocketAddr,
     expected: Vec<u8>,
-    /// Shared state for the server task. Tests can swap `behaviour` and the
-    /// server picks up the new value on the next request.
+    /// Shared state for the server task. Reserved for tests that need to
+    /// swap `behaviour` mid-run; the server picks up the new value on the
+    /// next request.
+    #[allow(dead_code)]
     behaviour: Arc<std::sync::Mutex<ServerBehaviour>>,
 }
 
@@ -60,7 +62,9 @@ async fn spawn_server_with(total: usize, behaviour: ServerBehaviour) -> TestServ
 
     tokio::spawn(async move {
         loop {
-            let Ok((mut stream, _)) = listener.accept().await else { continue };
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
             let content = Arc::clone(&content);
             let behaviour = Arc::clone(&behaviour_shared);
             tokio::spawn(async move {
@@ -188,7 +192,11 @@ async fn spawn_server_with(total: usize, behaviour: ServerBehaviour) -> TestServ
         }
     });
 
-    TestServer { addr, expected, behaviour }
+    TestServer {
+        addr,
+        expected,
+        behaviour,
+    }
 }
 
 fn url_for(server: &TestServer, path: &str) -> String {
@@ -219,7 +227,11 @@ where
 }
 
 /// Shared test setup: temp dirs, manager, pump loop, sink.
-fn setup() -> (std::path::PathBuf, Arc<DownloadManager>, tokio::sync::mpsc::UnboundedReceiver<EngineEvent>) {
+fn setup() -> (
+    std::path::PathBuf,
+    Arc<DownloadManager>,
+    tokio::sync::mpsc::UnboundedReceiver<EngineEvent>,
+) {
     let seq = DIR_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = std::env::temp_dir().join(format!("dp-test-{}-{seq}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -243,6 +255,7 @@ fn new_download(url: &str, filename: &str, save_dir: &str, threads: u32) -> NewD
         referer: None,
         user_agent: None,
         cookies: None,
+        proxy_url: None,
         expected_sha256: None,
         category: None,
         queue: None,
@@ -253,9 +266,11 @@ fn new_download(url: &str, filename: &str, save_dir: &str, threads: u32) -> NewD
         read_timeout_ms: None,
         checksum_algorithm: None,
         on_complete: None,
+        priority: None,
         start_immediately: true,
         browser_dedup_id: String::new(),
         skip_probe: false,
+        mirrors: Vec::new(),
     }
 }
 
@@ -268,7 +283,10 @@ async fn wait_for_status(
 ) -> bool {
     tokio::time::timeout(timeout, async {
         while let Some(ev) = sink_rx.recv().await {
-            if let EngineEvent::StatusChanged { id: eid, status, .. } = ev {
+            if let EngineEvent::StatusChanged {
+                id: eid, status, ..
+            } = ev
+            {
                 if eid == id && status == want {
                     return true;
                 }
@@ -292,7 +310,10 @@ async fn wait_for_terminal(
     tokio::time::timeout(timeout, async {
         let mut last = None;
         while let Some(ev) = sink_rx.recv().await {
-            if let EngineEvent::StatusChanged { id: eid, status, .. } = ev {
+            if let EngineEvent::StatusChanged {
+                id: eid, status, ..
+            } = ev
+            {
                 if eid == id {
                     last = Some(status);
                     if matches!(
@@ -328,7 +349,10 @@ async fn chunked_download_4_threads_persists_and_verifies() {
     let out_path = tmp.join("test.bin");
     let got = std::fs::read(&out_path).expect("output file should exist");
     assert_eq!(got.len(), server.expected.len(), "file size mismatch");
-    assert_eq!(got, server.expected, "file content mismatch (integrity check)");
+    assert_eq!(
+        got, server.expected,
+        "file content mismatch (integrity check)"
+    );
 
     // Verify persistence: DB row reflects completed state
     let task = manager.get(id).expect("task should be in db");
@@ -336,6 +360,32 @@ async fn chunked_download_4_threads_persists_and_verifies() {
     assert_eq!(task.downloaded, SIZE as i64);
 
     println!("✓ chunked download: 4 threads, 1 MiB, integrity OK, persisted OK");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
+async fn checksum_mismatch_marks_download_failed() {
+    let server = spawn_range_server().await;
+    let url = url_for(&server, "bad-checksum.bin");
+    let (tmp, manager, mut sink_rx) = setup();
+    let mut download = new_download(&url, "bad-checksum.bin", &tmp.to_string_lossy(), 2);
+    download.expected_sha256 =
+        Some("0000000000000000000000000000000000000000000000000000000000000000".into());
+
+    let id = manager.add(download).await.expect("add should succeed");
+    let failed = wait_for_status(&mut sink_rx, id, Status::Failed, Duration::from_secs(30)).await;
+    assert!(failed, "checksum mismatch must fail the task");
+
+    let task = manager.get(id).expect("task should be in db");
+    assert_eq!(task.status, Status::Failed);
+    assert!(!task.checksum_verified);
+    assert!(task
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("checksum mismatch"));
+    assert!(!task.completed_at.map(|value| value > 0).unwrap_or(false));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -354,7 +404,9 @@ async fn pause_then_resume_keeps_progress() {
     // Give it a moment to start, then pause (128 MiB takes a while even on
     // loopback, so 100ms is safely mid-download)
     tokio::time::sleep(Duration::from_millis(100)).await;
-    manager.pause(id).expect("pause should work while downloading");
+    manager
+        .pause(id)
+        .expect("pause should work while downloading");
 
     let paused = wait_for_status(&mut sink_rx, id, Status::Paused, Duration::from_secs(10)).await;
     assert!(paused, "task did not pause");
@@ -388,9 +440,17 @@ async fn stop_keeps_partial_file_and_marks_stopped() {
 
     // Wait for the download to actually start, then give it a moment to
     // make real progress before stopping.
-    let _ = wait_for_status(&mut sink_rx, id, Status::Downloading, Duration::from_secs(5)).await;
+    let _ = wait_for_status(
+        &mut sink_rx,
+        id,
+        Status::Downloading,
+        Duration::from_secs(5),
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    manager.cancel(id).expect("cancel should work while downloading");
+    manager
+        .cancel(id)
+        .expect("cancel should work while downloading");
 
     let stopped = wait_for_status(&mut sink_rx, id, Status::Stopped, Duration::from_secs(10)).await;
     assert!(stopped, "task did not reach Stopped status");
@@ -399,7 +459,10 @@ async fn stop_keeps_partial_file_and_marks_stopped() {
     // the engine must accept resume().
     let task = manager.get(id).unwrap();
     assert_eq!(task.status, Status::Stopped);
-    assert!(task.status.is_resumable(), "Stopped should be a resumable state");
+    assert!(
+        task.status.is_resumable(),
+        "Stopped should be a resumable state"
+    );
 
     println!("✓ stop: status=Stopped, file kept, task is resumable");
 
@@ -429,7 +492,13 @@ async fn persistence_across_restart_preserves_state() {
         // Wait for the download to actually start (status=Downloading),
         // not just for an arbitrary delay — races between the add and
         // the manager background-spawn caused flaky test failures.
-        let _ = wait_for_status(&mut sink_rx, id, Status::Downloading, Duration::from_secs(5)).await;
+        let _ = wait_for_status(
+            &mut sink_rx,
+            id,
+            Status::Downloading,
+            Duration::from_secs(5),
+        )
+        .await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         manager.pause(id).unwrap();
         // Drain any other StatusChanged events for this id (start might
@@ -481,14 +550,25 @@ async fn failed_download_marks_failed_and_keeps_partial_file() {
         .iter()
         .filter(|t| t.status == Status::Failed && t.filename == "missing.bin")
         .collect();
-    assert_eq!(failed.len(), 1, "expected exactly one failed missing.bin task");
+    assert_eq!(
+        failed.len(),
+        1,
+        "expected exactly one failed missing.bin task"
+    );
     assert!(
         failed[0].error.as_deref().unwrap_or("").contains("404")
-            || failed[0].error.as_deref().unwrap_or("").contains("Not Found"),
+            || failed[0]
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("Not Found"),
         "persisted error should mention 404, got: {:?}",
         failed[0].error
     );
-    assert!(failed[0].status.is_resumable(), "Failed should be resumable");
+    assert!(
+        failed[0].status.is_resumable(),
+        "Failed should be resumable"
+    );
 
     println!("✓ 404: add() returns error immediately, task persisted as Failed");
 
@@ -512,8 +592,15 @@ async fn http_503_marks_failed() {
         .iter()
         .filter(|t| t.status == Status::Failed && t.filename == "broken.bin")
         .collect();
-    assert_eq!(failed.len(), 1, "expected exactly one failed broken.bin task");
-    assert!(failed[0].status.is_resumable(), "Failed should be resumable");
+    assert_eq!(
+        failed.len(),
+        1,
+        "expected exactly one failed broken.bin task"
+    );
+    assert!(
+        failed[0].status.is_resumable(),
+        "Failed should be resumable"
+    );
 
     println!("✓ 503: add() returns error immediately, task persisted as Failed");
 
@@ -548,16 +635,23 @@ async fn concurrent_downloads_complete_independently() {
     let drain = tokio::time::timeout(Duration::from_secs(30), async {
         while completed.len() < 3 {
             match sink_rx.recv().await {
-                Some(EngineEvent::StatusChanged { id, status, .. })
-                    if status == Status::Completed =>
-                {
+                Some(EngineEvent::StatusChanged {
+                    id,
+                    status: Status::Completed,
+                    ..
+                }) => {
                     if [id_a, id_b, id_c].contains(&id) {
                         completed.insert(id);
                     }
                 }
-                Some(EngineEvent::StatusChanged { status: Status::Failed, .. })
-                | Some(EngineEvent::StatusChanged { status: Status::Stopped, .. }) =>
-                {
+                Some(EngineEvent::StatusChanged {
+                    status: Status::Failed,
+                    ..
+                })
+                | Some(EngineEvent::StatusChanged {
+                    status: Status::Stopped,
+                    ..
+                }) => {
                     // Don't bail early on the first non-completed terminal
                     // event — other concurrent tasks may still be running.
                 }
@@ -566,9 +660,16 @@ async fn concurrent_downloads_complete_independently() {
         }
     })
     .await;
-    assert!(drain.is_ok(), "concurrent downloads did not finish in 30s (got {}/3)", completed.len());
+    assert!(
+        drain.is_ok(),
+        "concurrent downloads did not finish in 30s (got {}/3)",
+        completed.len()
+    );
     for id in [id_a, id_b, id_c] {
-        assert!(completed.contains(&id), "concurrent task {id} did not complete");
+        assert!(
+            completed.contains(&id),
+            "concurrent task {id} did not complete"
+        );
     }
 
     for name in ["a.bin", "b.bin", "c.bin"] {

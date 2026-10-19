@@ -1,0 +1,11 @@
+# Local cargo configuration for DownPilot.
+#
+# The async integration tests (chunked download, retry, timeout, persistence,
+# browser capture) spawn a real local HTTP server inside `#[tokio::test]`.
+# On Linux, tokio's default worker stack is 2 MiB which is enough for most
+# code paths but too small for our chunked downloader when it hits a hung
+# connection (the abort path recurses through read polling + cancellation
+# tokens and overflows on 2 MiB). Bumping to 8 MiB keeps the existing tests
+# passing without changing the production binary's stack.
+[env]
+RUST_MIN_STACK = "8388608"

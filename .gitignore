@@ -26,3 +26,9 @@ Thumbs.db
 .env.local
 cookies*.txt
 *session*id*
+
+# Release artifacts (ship as GitHub Release assets)
+release/*.tar.gz
+release/*.zip
+release/*.deb
+release/*.rpm

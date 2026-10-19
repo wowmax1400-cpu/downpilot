@@ -23,6 +23,9 @@ export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: P
   );
   const [description, setDescription] = React.useState("");
   const [startNow, setStartNow] = React.useState(true);
+  // Mirror/multi-source: one alternate URL per line. Each is tried in
+  // order if the primary URL fails with a retryable error.
+  const [mirrors, setMirrors] = React.useState("");
   const [err, setErr] = React.useState("");
   const [probing, setProbing] = React.useState(false);
   const [probe, setProbe] = React.useState<api.ProbeInfo | null>(null);
@@ -106,6 +109,10 @@ export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: P
         threads: connections,
         description: description.trim() || null,
         start_immediately: startNow,
+        mirrors: mirrors
+          .split("\n")
+          .map((m) => m.trim())
+          .filter((m) => m && m !== url.trim()),
       });
       onClose();
     } catch (e) {
@@ -236,6 +243,18 @@ export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: P
           />
           Start download immediately
        </label>
+        <Field
+          label="Mirrors (one URL per line)"
+          hint="Alternate sources for the same file — tried in order if the main URL fails."
+        >
+          <textarea
+            className="input input--area"
+            rows={2}
+            placeholder="https://mirror.example.com/file.zip"
+            value={mirrors}
+            onChange={(e) => setMirrors(e.target.value)}
+          />
+       </Field>
         {err ? <div className="form-error">{err}</div> : null}
      </div>
    </Dialog>

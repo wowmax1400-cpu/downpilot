@@ -140,6 +140,49 @@ DownPilot desktop app
   is cancelled and the URL is handed to DownPilot's multi-threaded engine
   instead. If DownPilot isn't running, the download falls back to Chrome.
 
+## Firefox support
+
+Firefox MV3 (115+) supports native messaging the same way Chrome does,
+so the **same** `downpilot-nmh` relay binary in the Tauri app handles
+both browsers — the protocol is identical (Chrome native messaging
+frames on stdio, length-prefixed JSON, terminated by the same
+newline-delimited frame format the Rust side reads in
+`run_nmh_server`/`read_frame`). No Tauri source change is required.
+
+There are three things to install:
+
+1. **The Firefox extension** — load `extension/firefox/manifest.json`
+   as a temporary add-on:
+   - Open `about:debugging#/runtime/this-firefox`
+   - Click **Load Temporary Add-on…**
+   - Select `extension/firefox/manifest.json`
+   The temporary install is removed when Firefox restarts; re-load
+   from the same dialog to keep it.
+2. **The Firefox native messaging host manifest** — install the file
+   at `native-host/firefox/downpilot-firefox-nmh.json` to
+   `~/.mozilla/native-messaging-hosts/` (create the directory if it
+   doesn't exist). The manifest's `path` field points to the same
+   `~/.local/bin/downpilot-nmh` binary the Chrome manifest uses; no
+   separate copy of the relay is needed.
+3. **The Tauri app** — unchanged. Start it once so the relay can
+   connect to `127.0.0.1:19851`.
+
+**Important:** the `browser_specific_settings.gecko.id` in
+`extension/firefox/manifest.json` (`downpilot@local`) MUST equal the
+`allowed_extensions` entry in the host manifest
+(`downpilot-firefox-nmh.json`). Firefox silently refuses to connect
+to the native host if these don't match — there is no error in the
+UI, the extension just shows a permanent "not connected" state. If
+you change the id in one place, change it in both.
+
+The Firefox manifest uses `browser_action` (not `action`), a
+`background.scripts` array (not `service_worker`), and a
+`browser_specific_settings.gecko` block (not a `key`). All other
+fields are kept identical to the Chrome manifest, and `background.js`
+is copied verbatim because Firefox aliases `chrome.*` to `browser.*`
+under the gecko shim. See `extension/firefox/README.md` for the
+full Chrome → Firefox diff.
+
 ## Themes
 
 Settings → Themes. Four presets + accent color picker (custom hex or the

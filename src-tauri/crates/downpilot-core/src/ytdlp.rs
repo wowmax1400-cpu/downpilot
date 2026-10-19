@@ -78,10 +78,7 @@ fn write_cookie_jar(cookies: &str, url: &str) -> Option<PathBuf> {
         //   host-only  -> "www.xx" + FALSE
         //   domain-wide -> ".xx"     + TRUE
         // (Python's http.cookiejar asserts this; a mismatch breaks yt-dlp.)
-        let domains = vec![
-            (host.to_string(), "FALSE"),
-            (format!(".{host}"), "TRUE"),
-        ];
+        let domains = vec![(host.to_string(), "FALSE"), (format!(".{host}"), "TRUE")];
         for (d, flag) in domains {
             body.push_str(&format!(
                 "{}\t{}\t/\tFALSE\t2147483647\t{}\t{}\n",
@@ -90,8 +87,11 @@ fn write_cookie_jar(cookies: &str, url: &str) -> Option<PathBuf> {
         }
     }
     let seq = COOKIE_SEQ.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir()
-        .join(format!("downpilot-cookies-{}-{}.txt", std::process::id(), seq));
+    let path = std::env::temp_dir().join(format!(
+        "downpilot-cookies-{}-{}.txt",
+        std::process::id(),
+        seq
+    ));
     std::fs::write(&path, body).ok()?;
     Some(path)
 }
@@ -120,7 +120,10 @@ impl YtDlp {
     /// Probe a URL and return curated media info.
     pub async fn probe(url: &str, opts: &ProbeOptions) -> Result<MediaInfo, YtDlpError> {
         let mut cmd = Command::new("yt-dlp");
-        cmd.arg("-J").arg("--no-playlist").arg("--no-warnings").arg(url);
+        cmd.arg("-J")
+            .arg("--no-playlist")
+            .arg("--no-warnings")
+            .arg(url);
         if let Some(p) = &opts.proxy {
             cmd.arg("--proxy").arg(p);
         }
@@ -147,14 +150,22 @@ impl YtDlp {
             }
         })?;
 
-        let out = tokio::time::timeout(Duration::from_secs(60), read_output(child)).await
-            .map_err(|_| YtDlpError::Failed { code: None, stderr: "probe timed out after 60s".into() })??;
+        let out = tokio::time::timeout(Duration::from_secs(60), read_output(child))
+            .await
+            .map_err(|_| YtDlpError::Failed {
+                code: None,
+                stderr: "probe timed out after 60s".into(),
+            })??;
 
         if !out.status {
-            return Err(YtDlpError::Failed { code: out.code, stderr: out.stderr });
+            return Err(YtDlpError::Failed {
+                code: out.code,
+                stderr: out.stderr,
+            });
         }
 
-        let v: Value = serde_json::from_str(&out.stdout).map_err(|e| YtDlpError::BadJson(e.to_string()))?;
+        let v: Value =
+            serde_json::from_str(&out.stdout).map_err(|e| YtDlpError::BadJson(e.to_string()))?;
         build_media_info(v, url)
     }
 
@@ -176,12 +187,15 @@ impl YtDlp {
         let template = save_dir.join("%(title)s [%(id)s].%(ext)s");
         let mut cmd = Command::new("yt-dlp");
         cmd.arg("--no-playlist")
-            .arg("-f").arg(format_id)
-            .arg("-o").arg(template.to_string_lossy().to_string())
+            .arg("-f")
+            .arg(format_id)
+            .arg("-o")
+            .arg(template.to_string_lossy().to_string())
             .arg("--newline")
             .arg("--no-warnings")
             .arg("--progress")
-            .arg("--merge-output-format").arg("mp4")
+            .arg("--merge-output-format")
+            .arg("mp4")
             .arg(url);
         if let Some(p) = proxy {
             cmd.arg("--proxy").arg(p);
@@ -218,7 +232,8 @@ impl YtDlp {
         let mut err_lines = BufReader::new(stderr).lines();
         let mut err_buf = String::new();
 
-        let progress_re = Regex::new(r"\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+)(KiB|MiB|GiB)").unwrap();
+        let progress_re =
+            Regex::new(r"\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+)(KiB|MiB|GiB)").unwrap();
 
         loop {
             tokio::select! {
@@ -255,7 +270,10 @@ impl YtDlp {
         }
         let status = child.wait().await?;
         if !status.success() {
-            return Err(YtDlpError::Failed { code: status.code(), stderr: err_buf });
+            return Err(YtDlpError::Failed {
+                code: status.code(),
+                stderr: err_buf,
+            });
         }
         // Find the produced file (newest matching entry in save_dir).
         let mut dir = tokio::fs::read_dir(save_dir).await?;
@@ -271,7 +289,10 @@ impl YtDlp {
                 }
             }
         }
-        newest.map(|(p, _)| p).ok_or_else(|| YtDlpError::Failed { code: None, stderr: "no output file found".into() })
+        newest.map(|(p, _)| p).ok_or_else(|| YtDlpError::Failed {
+            code: None,
+            stderr: "no output file found".into(),
+        })
     }
 }
 
@@ -294,7 +315,10 @@ async fn read_output(child: tokio::process::Child) -> Result<ChildOutput, YtDlpE
 
 fn build_media_info(v: Value, fallback_url: &str) -> Result<MediaInfo, YtDlpError> {
     let title = v["title"].as_str().unwrap_or("untitled").to_string();
-    let webpage_url = v["webpage_url"].as_str().unwrap_or(fallback_url).to_string();
+    let webpage_url = v["webpage_url"]
+        .as_str()
+        .unwrap_or(fallback_url)
+        .to_string();
     let thumbnail = v["thumbnail"].as_str().map(|s| s.to_string());
     let duration = v["duration"].as_f64();
     let uploader = v["uploader"].as_str().map(|s| s.to_string());
@@ -302,8 +326,14 @@ fn build_media_info(v: Value, fallback_url: &str) -> Result<MediaInfo, YtDlpErro
     let mut formats: Vec<MediaFormat> = Vec::new();
     if let Some(arr) = v["formats"].as_array() {
         for f in arr {
-            let vcodec = f["vcodec"].as_str().map(|s| s.to_string()).filter(|s| s != "none");
-            let acodec = f["acodec"].as_str().map(|s| s.to_string()).filter(|s| s != "none");
+            let vcodec = f["vcodec"]
+                .as_str()
+                .map(|s| s.to_string())
+                .filter(|s| s != "none");
+            let acodec = f["acodec"]
+                .as_str()
+                .map(|s| s.to_string())
+                .filter(|s| s != "none");
             let height = f["height"].as_i64();
             let fps = f["fps"].as_f64();
             let resolution = match (height, f["width"].as_i64()) {
@@ -311,7 +341,9 @@ fn build_media_info(v: Value, fallback_url: &str) -> Result<MediaInfo, YtDlpErro
                 (Some(h), None) => Some(format!("{h}p")),
                 _ => None,
             };
-            let filesize = f["filesize"].as_i64().or_else(|| f["filesize_approx"].as_i64());
+            let filesize = f["filesize"]
+                .as_i64()
+                .or_else(|| f["filesize_approx"].as_i64());
             formats.push(MediaFormat {
                 format_id: f["format_id"].as_str().unwrap_or("?").to_string(),
                 ext: f["ext"].as_str().unwrap_or("?").to_string(),
@@ -337,17 +369,27 @@ fn build_media_info(v: Value, fallback_url: &str) -> Result<MediaInfo, YtDlpErro
     for f in &formats {
         let is_video = f.vcodec.is_some() && f.acodec.is_some();
         let h = f.resolution.as_ref().and_then(|r| {
-            r.rsplit('x').next().and_then(|s| s.trim_end_matches('p').parse::<i64>().ok())
+            r.rsplit('x')
+                .next()
+                .and_then(|s| s.trim_end_matches('p').parse::<i64>().ok())
         });
         if is_video && f.protocol.as_deref() != Some("mhtml") {
-            if h == Some(1080) && p1080.is_none() { p1080 = Some(f.clone()); }
-            if h == Some(720) && p720.is_none() { p720 = Some(f.clone()); }
+            if h == Some(1080) && p1080.is_none() {
+                p1080 = Some(f.clone());
+            }
+            if h == Some(720) && p720.is_none() {
+                p720 = Some(f.clone());
+            }
             if best.is_none() || h.unwrap_or(0) > best_res(&best) {
                 best = Some(f.clone());
             }
         }
         if f.vcodec.is_none() && f.acodec.is_some() {
-            let abr = f.note.as_deref().and_then(|n| n.parse::<f64>().ok()).unwrap_or(0.0);
+            let abr = f
+                .note
+                .as_deref()
+                .and_then(|n| n.parse::<f64>().ok())
+                .unwrap_or(0.0);
             if audio.as_ref().map(|(a, _)| abr > *a).unwrap_or(true) {
                 audio = Some((abr, f.clone()));
             }
@@ -358,21 +400,43 @@ fn build_media_info(v: Value, fallback_url: &str) -> Result<MediaInfo, YtDlpErro
         note: Some(label.to_string()),
         ..f.clone()
     };
-    if let Some(f) = best { quick_picks.push(mk("Best quality", &f)); }
-    if let Some(f) = p1080 { quick_picks.push(mk("1080p", &f)); }
-    if let Some(f) = p720 { quick_picks.push(mk("720p", &f)); }
-    if let Some((_, f)) = audio { quick_picks.push(mk("Audio only", &f)); }
+    if let Some(f) = best {
+        quick_picks.push(mk("Best quality", &f));
+    }
+    if let Some(f) = p1080 {
+        quick_picks.push(mk("1080p", &f));
+    }
+    if let Some(f) = p720 {
+        quick_picks.push(mk("720p", &f));
+    }
+    if let Some((_, f)) = audio {
+        quick_picks.push(mk("Audio only", &f));
+    }
     // Fallback special IDs handled by yt-dlp at download time.
     if quick_picks.is_empty() {
         quick_picks.push(MediaFormat {
-            format_id: "bv*+ba/b".into(), ext: "mp4".into(), resolution: None, fps: None,
-            vcodec: Some("any".into()), acodec: Some("any".into()), filesize: None,
-            note: Some("Best quality".into()), url: None, protocol: None,
+            format_id: "bv*+ba/b".into(),
+            ext: "mp4".into(),
+            resolution: None,
+            fps: None,
+            vcodec: Some("any".into()),
+            acodec: Some("any".into()),
+            filesize: None,
+            note: Some("Best quality".into()),
+            url: None,
+            protocol: None,
         });
         quick_picks.push(MediaFormat {
-            format_id: "ba/b".into(), ext: "m4a".into(), resolution: None, fps: None,
-            vcodec: None, acodec: Some("any".into()), filesize: None,
-            note: Some("Audio only".into()), url: None, protocol: None,
+            format_id: "ba/b".into(),
+            ext: "m4a".into(),
+            resolution: None,
+            fps: None,
+            vcodec: None,
+            acodec: Some("any".into()),
+            filesize: None,
+            note: Some("Audio only".into()),
+            url: None,
+            protocol: None,
         });
     }
 
@@ -392,7 +456,12 @@ fn build_media_info(v: Value, fallback_url: &str) -> Result<MediaInfo, YtDlpErro
 }
 
 fn best_res(f: &Option<MediaFormat>) -> i64 {
-    f.as_ref().and_then(|f| f.resolution.as_ref())
-        .and_then(|r| r.rsplit('x').next().and_then(|s| s.trim_end_matches('p').parse().ok()))
+    f.as_ref()
+        .and_then(|f| f.resolution.as_ref())
+        .and_then(|r| {
+            r.rsplit('x')
+                .next()
+                .and_then(|s| s.trim_end_matches('p').parse().ok())
+        })
         .unwrap_or(0)
 }

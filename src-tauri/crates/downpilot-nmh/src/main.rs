@@ -24,7 +24,10 @@ fn read_frame(r: &mut dyn Read) -> io::Result<Option<Vec<u8>>> {
     }
     let len = u32::from_le_bytes(len_buf) as usize;
     if len > 16 * 1024 * 1024 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
@@ -57,7 +60,10 @@ fn connect_with_retry() -> io::Result<TcpStream> {
             Err(_) => std::thread::sleep(Duration::from_millis(400)),
         }
     }
-    Err(io::Error::new(io::ErrorKind::NotFound, "downpilot app not reachable"))
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "downpilot app not reachable",
+    ))
 }
 
 fn main() {
@@ -74,8 +80,15 @@ fn main() {
     };
 
     while let Ok(Some(frame)) = read_frame(&mut stdin) {
-        if stream.write_all(&(frame.len() as u32).to_le_bytes()).and_then(|_| stream.write_all(&frame)).is_err() {
-            let _ = write_frame(&mut stdout, br#"{"ok":false,"error":"connection to DownPilot lost"}"#);
+        if stream
+            .write_all(&(frame.len() as u32).to_le_bytes())
+            .and_then(|_| stream.write_all(&frame))
+            .is_err()
+        {
+            let _ = write_frame(
+                &mut stdout,
+                br#"{"ok":false,"error":"connection to DownPilot lost"}"#,
+            );
             return;
         }
         match read_frame(&mut stream) {
@@ -85,7 +98,10 @@ fn main() {
                 }
             }
             _ => {
-                let _ = write_frame(&mut stdout, br#"{"ok":false,"error":"no response from DownPilot"}"#);
+                let _ = write_frame(
+                    &mut stdout,
+                    br#"{"ok":false,"error":"no response from DownPilot"}"#,
+                );
                 return;
             }
         }

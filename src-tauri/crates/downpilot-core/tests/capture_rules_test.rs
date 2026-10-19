@@ -16,32 +16,77 @@ use downpilot_core::models::{NewDownload, Status};
 
 #[test]
 fn host_matcher_handles_subdomains_but_not_lookalikes() {
-    assert!(url_host_matches_pattern("https://www.example.com/foo.zip", "example.com"));
-    assert!(url_host_matches_pattern("https://cdn.example.com/foo.zip", "example.com"));
-    assert!(url_host_matches_pattern("https://api.example.com/foo.zip", "example.com"));
-    assert!(!url_host_matches_pattern("https://notexample.com/foo.zip", "example.com"));
-    assert!(!url_host_matches_pattern("https://example.com.evil.tld/foo.zip", "example.com"));
+    assert!(url_host_matches_pattern(
+        "https://www.example.com/foo.zip",
+        "example.com"
+    ));
+    assert!(url_host_matches_pattern(
+        "https://cdn.example.com/foo.zip",
+        "example.com"
+    ));
+    assert!(url_host_matches_pattern(
+        "https://api.example.com/foo.zip",
+        "example.com"
+    ));
+    assert!(!url_host_matches_pattern(
+        "https://notexample.com/foo.zip",
+        "example.com"
+    ));
+    assert!(!url_host_matches_pattern(
+        "https://example.com.evil.tld/foo.zip",
+        "example.com"
+    ));
 }
 
 #[test]
 fn host_matcher_handles_leading_dot_wildcards() {
-    assert!(url_host_matches_pattern("https://example.com/x", ".example.com"));
-    assert!(url_host_matches_pattern("https://a.b.example.com/x", ".example.com"));
-    assert!(!url_host_matches_pattern("https://notexample.com/x", ".example.com"));
-    assert!(!url_host_matches_pattern("https://example.org/x", ".example.com"));
+    assert!(url_host_matches_pattern(
+        "https://example.com/x",
+        ".example.com"
+    ));
+    assert!(url_host_matches_pattern(
+        "https://a.b.example.com/x",
+        ".example.com"
+    ));
+    assert!(!url_host_matches_pattern(
+        "https://notexample.com/x",
+        ".example.com"
+    ));
+    assert!(!url_host_matches_pattern(
+        "https://example.org/x",
+        ".example.com"
+    ));
 }
 
 #[test]
 fn host_matcher_normalizes_case_and_port() {
-    assert!(url_host_matches_pattern("HTTPS://WWW.Example.COM:8443/foo.zip", "example.com"));
-    assert!(url_host_matches_pattern("https://Example.com:443/foo.zip", "EXAMPLE.com"));
+    assert!(url_host_matches_pattern(
+        "HTTPS://WWW.Example.COM:8443/foo.zip",
+        "example.com"
+    ));
+    assert!(url_host_matches_pattern(
+        "https://Example.com:443/foo.zip",
+        "EXAMPLE.com"
+    ));
     assert!(!url_host_matches_pattern("https://example.com/foo", ""));
-    assert!(!url_host_matches_pattern("https://example.com/foo", "not a host"));
+    assert!(!url_host_matches_pattern(
+        "https://example.com/foo",
+        "not a host"
+    ));
     assert!(!url_host_matches_pattern("not a url", "example.com"));
     assert!(!url_host_matches_pattern("", "example.com"));
-    assert!(!url_host_matches_pattern("https://example.com", "https://example.com"));
-    assert!(!url_host_matches_pattern("https://example.com", "example.com/"));
-    assert!(!url_host_matches_pattern("https://example.com", "exam ple.com"));
+    assert!(!url_host_matches_pattern(
+        "https://example.com",
+        "https://example.com"
+    ));
+    assert!(!url_host_matches_pattern(
+        "https://example.com",
+        "example.com/"
+    ));
+    assert!(!url_host_matches_pattern(
+        "https://example.com",
+        "exam ple.com"
+    ));
 }
 
 #[test]
@@ -72,6 +117,7 @@ async fn submit_browser_download_returns_existing_id_on_duplicate() {
         referer: None,
         user_agent: None,
         cookies: None,
+        proxy_url: None,
         expected_sha256: None,
         category: None,
         queue: None,
@@ -82,13 +128,18 @@ async fn submit_browser_download_returns_existing_id_on_duplicate() {
         read_timeout_ms: None,
         checksum_algorithm: None,
         on_complete: None,
+        priority: None,
         start_immediately: false,
         browser_dedup_id: "browser-abc".to_string(),
         skip_probe: true,
+        mirrors: Vec::new(),
     };
     let id1 = manager.add(make_nd()).await.expect("first add");
     let id2 = manager.add(make_nd()).await.expect("second add (dedup)");
-    assert_eq!(id1, id2, "duplicate browser_dedup_id must return the same task id");
+    assert_eq!(
+        id1, id2,
+        "duplicate browser_dedup_id must return the same task id"
+    );
     let list = manager.list();
     assert_eq!(list.len(), 1, "exactly one DownPilot task should exist");
     assert_eq!(list[0].status, Status::Queued);
@@ -101,7 +152,9 @@ async fn submit_browser_download_with_skip_probe_inserts_when_probe_fails() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         loop {
@@ -112,7 +165,9 @@ async fn submit_browser_download_with_skip_probe_inserts_when_probe_fails() {
             tokio::spawn(async move {
                 let mut buf = [0u8; 1024];
                 let _ = s.read(&mut buf).await;
-                let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
+                let _ = s
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                    .await;
                 let _ = s.shutdown().await;
             });
         }
@@ -134,6 +189,7 @@ async fn submit_browser_download_with_skip_probe_inserts_when_probe_fails() {
         referer: None,
         user_agent: None,
         cookies: None,
+        proxy_url: None,
         expected_sha256: None,
         category: None,
         queue: None,
@@ -144,11 +200,16 @@ async fn submit_browser_download_with_skip_probe_inserts_when_probe_fails() {
         read_timeout_ms: None,
         checksum_algorithm: None,
         on_complete: None,
+        priority: None,
         start_immediately: false,
         browser_dedup_id: "browser-404".to_string(),
         skip_probe: true,
+        mirrors: Vec::new(),
     };
-    let id = manager.add(nd).await.expect("insert succeeds with skip_probe");
+    let id = manager
+        .add(nd)
+        .await
+        .expect("insert succeeds with skip_probe");
     assert!(id > 0);
     let list = manager.list();
     assert_eq!(list.len(), 1);
@@ -162,7 +223,9 @@ async fn submit_browser_download_without_skip_probe_fails_on_404() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         loop {
@@ -173,7 +236,9 @@ async fn submit_browser_download_without_skip_probe_fails_on_404() {
             tokio::spawn(async move {
                 let mut buf = [0u8; 1024];
                 let _ = s.read(&mut buf).await;
-                let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
+                let _ = s
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                    .await;
                 let _ = s.shutdown().await;
             });
         }
@@ -195,6 +260,7 @@ async fn submit_browser_download_without_skip_probe_fails_on_404() {
         referer: None,
         user_agent: None,
         cookies: None,
+        proxy_url: None,
         expected_sha256: None,
         category: None,
         queue: None,
@@ -205,9 +271,11 @@ async fn submit_browser_download_without_skip_probe_fails_on_404() {
         read_timeout_ms: None,
         checksum_algorithm: None,
         on_complete: None,
+        priority: None,
         start_immediately: false,
         browser_dedup_id: "browser-404-probe".to_string(),
         skip_probe: false,
+        mirrors: Vec::new(),
     };
     let result = manager.add(nd).await;
     assert!(result.is_err(), "default probe path must reject a 404");
@@ -216,6 +284,10 @@ async fn submit_browser_download_without_skip_probe_fails_on_404() {
     // status is NOT Queued/Downloading and no further probe-side writes
     // happen.
     let list = manager.list();
-    assert_eq!(list.len(), 1, "failed probe marks the row Failed (visible in UI)");
+    assert_eq!(
+        list.len(),
+        1,
+        "failed probe marks the row Failed (visible in UI)"
+    );
     assert_eq!(list[0].status, Status::Failed);
 }

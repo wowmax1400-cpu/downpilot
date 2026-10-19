@@ -1,6 +1,6 @@
 [package]
 name = "downpilot"
-version = "0.1.0"
+version = "1.0.0"
 description = "DownPilot - high-performance download manager for Linux (Tauri v2)"
 edition = "2021"
 
@@ -12,11 +12,24 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# Tauri core. `tray-icon` enables the built-in TrayIconBuilder API.
+# `image-png` lets us load the .png tray icon at runtime.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "fs"] }
 downpilot-core = { path = "crates/downpilot-core" }
+# OS keyring (libsecret via D-Bus on Linux, Keychain on macOS, Credential Manager on Windows).
+# Falls back to an in-process AES-GCM-encrypted file if no D-Bus session is available (e.g.
+# headless ...[truncated]
+
+# Phase 1 desktop-integration plugins.
+# Pin each to its next-major ceiling per the project dependency policy.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-notification = "2"
+# Autostart on login (so the user's tray-stashed app is there after reboot).
+tauri-plugin-autostart = "2"
 
 [workspace]
 members = ["crates/downpilot-core", "crates/downpilot-nmh"]

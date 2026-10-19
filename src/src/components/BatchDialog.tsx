@@ -22,6 +22,12 @@ type Row = {
   selected: boolean;
   probing?: boolean;
   probeError?: string;
+  /** Phase 3C: error from a previous batch insert attempt
+   *  (kept on the row so the user can see which URL failed). */
+  error?: string;
+  /** Phase 3C: how many existing rows already use this URL.
+   *  > 0 means "duplicate — re-downloading will create a new id". */
+  dupCount?: number;
 };
 
 const DEFAULT_CAT = "other";
@@ -91,6 +97,38 @@ export function BatchDialog({ store, initialUrls, onClose }: Props) {
     rebuildFromText(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
+
+  // Phase 3C: per-URL duplicate check. When the row list changes
+  // (new text typed, paste, file import), ask the engine for the
+  // count of existing rows that share each URL. The result is
+  // stamped onto the row as `dupCount` and shown as a small "N
+  // existing" chip in the table. This is best-effort and async;
+  // if the engine is unreachable the rows just stay without a
+  // dupCount, which is fine.
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const counts = await Promise.all(
+        rows.map((r) => store.countExistingByUrl(r.url).catch(() => 0)),
+      );
+      if (cancelled) return;
+      setRows((rs) =>
+        rs.map((r, i) => {
+          const n = counts[i] ?? 0;
+          if (n === r.dupCount) return r;
+          return { ...r, dupCount: n };
+        }),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // We intentionally only re-run when the *set of URLs* changes,
+    // not on every row-state edit. Comparing via the joined URL
+    // list is cheap and avoids spamming the IPC bridge while the
+    // user toggles checkboxes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.map((r) => r.url).join("\n")]);
 
   // File import: pick a .txt / .list / no-extension file and load the
   // URLs from it. The file is read in the renderer (Tauri browsers
@@ -240,20 +278,58 @@ export function BatchDialog({ store, initialUrls, onClose }: Props) {
   };
 
   const startSelected = async () => {
-    let count = 0;
-    for (const r of rows) {
-      if (!r.selected) continue;
-      await store.add({
-        url: r.url,
-        filename: r.filename || null,
-        save_dir: r.save_dir || null,
-        category: r.category,
-        queue: r.queue,
-        start_immediately: true,
-      });
-      count++;
+    // Phase 3C: build the NewDownload array once, hand the whole
+    // batch to `addBatch` (single round-trip to the engine). The
+    // engine reports per-row success/failure so we can flag the
+    // ones that errored (disk space, malformed URL, auto_capture
+    // disabled, etc.).
+    const selected = rows.filter((r) => r.selected);
+    if (selected.length === 0) return;
+    const nds: import("../types").NewDownload[] = selected.map((r) => ({
+      url: r.url,
+      filename: r.filename || null,
+      save_dir: r.save_dir || null,
+      category: r.category,
+      queue: r.queue,
+      start_immediately: true,
+    }));
+    const results = await store.addBatch(nds);
+    let okCount = 0;
+    let errCount = 0;
+    const firstErr = results.find((r) => !r.ok);
+    results.forEach((res, i) => {
+      if (res.ok) {
+        okCount++;
+      } else {
+        errCount++;
+        // Mark the corresponding row as "started: false, error:
+        // <reason>" so the user can see which URL failed.
+        const url = nds[i].url;
+        setRows((rs) =>
+          rs.map((row) =>
+            row.url === url ? { ...row, error: res.error, started: false } : row,
+          ),
+        );
+      }
+    });
+    setStarted(okCount);
+    if (errCount > 0) {
+      // Per-row errors are already stamped onto the failed rows,
+      // so the user can see which URL failed without leaving the
+      // dialog. The notification is best-effort: if the store
+      // doesn't expose one, we silently skip.
+      const notify = (store as unknown as { notify?: (t: string, b: string, l: string) => Promise<void> }).notify;
+      if (notify) {
+        const firstErr = results.find((r) => !r.ok);
+        await notify(
+          "Batch download",
+          `Added ${okCount} of ${selected.length} (${errCount} failed${
+            firstErr && !firstErr.ok ? `: ${firstErr.error}` : ""
+          })`,
+          "warning",
+        );
+      }
     }
-    setStarted(count);
   };
 
   const selectedCount = rows.filter((r) => r.selected).length;
@@ -391,6 +467,19 @@ export function BatchDialog({ store, initialUrls, onClose }: Props) {
                     />
                     {r.probing && <span className="batch-pill">probing</span>}
                     {r.probeError && <span className="batch-pill batch-pill--err" title={r.probeError}></span>}
+                    {r.dupCount && r.dupCount > 0 ? (
+                      <span
+                        className="batch-pill batch-pill--warn"
+                        title={`${r.dupCount} existing download${r.dupCount === 1 ? "" : "s"} already use this URL`}
+                      >
+                        {r.dupCount}× existing
+                      </span>
+                    ) : null}
+                    {r.error ? (
+                      <span className="batch-pill batch-pill--err" title={r.error}>
+                        error
+                      </span>
+                    ) : null}
                  </div>
                   <div className="batch-cell batch-cell--size">{r.size ? formatBytes(r.size) : "—"}</div>
                   <div className="batch-cell batch-cell--type">{r.content_type ?? "—"}</div>

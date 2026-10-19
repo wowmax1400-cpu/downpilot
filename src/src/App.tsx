@@ -10,10 +10,12 @@ import { MenuBar } from "./components/MenuBar";
 import { Toolbar, type ToolbarAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
+import { DetailsPanel } from "./components/DetailsPanel";
 import { StatusBar } from "./components/StatusBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { AddDownloadDialog } from "./components/AddDownloadDialog";
 import { PropertiesDialog } from "./components/PropertiesDialog";
+import { IDMSegmentsDialog } from "./components/SegmentsModal";
 import { SiteGrabberDialog } from "./components/SiteGrabberDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SchedulerPanel } from "./components/SchedulerPanel";
@@ -21,6 +23,7 @@ import { QueuesPanel } from "./components/QueuesPanel";
 import { AboutDialog } from "./components/AboutDialog";
 import { BatchDialog } from "./components/BatchDialog";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { useI18n } from "./i18n";
 import * as api from "./lib/api";
 
 /** Extract plausible URLs from arbitrary text (one per line). */
@@ -44,6 +47,7 @@ function looksLikeUrl(s: string): boolean {
 
 export default function App() {
   const store = useDownloads();
+  const { t } = useI18n();
 
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState<string | undefined>(undefined);
@@ -56,10 +60,27 @@ export default function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [propsId, setPropsId] = useState<number | null>(null);
+  /** IDM-style per-segment progress window (double-click a running row). */
+  const [segmentsId, setSegmentsId] = useState<number | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(() => {
+    try {
+      return localStorage.getItem("downpilot.details.open") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [ctx, setCtx] = useState<{ x: number; y: number; ids: number[] } | null>(
     null
   );
   const [dragHover, setDragHover] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("downpilot.details.open", String(detailsOpen));
+    } catch {
+      // Ignore unavailable storage in private/browser mode.
+    }
+  }, [detailsOpen]);
 
   const onSelect = useCallback(
     (id: number, ev: React.MouseEvent) => {
@@ -80,13 +101,16 @@ export default function App() {
     [store.selected]
   );
 
-  /** Double-click on a row: Properties for active, Open File for done. */
+  /** Double-click on a row: Open File for done, IDM-style segment
+   *  window for a transfer in flight, Properties for everything else. */
   const onRowActivate = useCallback(
     (id: number) => {
       const t = store.tasks.find((x) => x.id === id);
       if (!t) return;
       if (t.status === "completed") {
         void store.openFile(t);
+      } else if (t.status === "downloading") {
+        setSegmentsId(id);
       } else {
         setPropsId(id);
       }
@@ -98,13 +122,13 @@ export default function App() {
   const renameSelected = useCallback(() => {
     const ids = Array.from(store.selected);
     if (ids.length === 0) return;
-    const t = store.tasks.find((x) => x.id === ids[0]);
-    if (!t) return;
-    const next = window.prompt("Rename to:", t.filename);
-    if (next && next.trim() && next !== t.filename) {
-      void store.rename(t.id, next.trim());
+    const task = store.tasks.find((x) => x.id === ids[0]);
+    if (!task) return;
+    const next = window.prompt(t("prompt.renameTo"), task.filename);
+    if (next && next.trim() && next !== task.filename) {
+      void store.rename(task.id, next.trim());
     }
-  }, [store]);
+  }, [store, t]);
 
   // ---- Drag and drop (Tauri webview events) ----
   // On drop we look at `payload.urls` (text/uri-list) and `payload.paths`
@@ -265,7 +289,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [store, onRowActivate, renameSelected]);
+  }, [store, onRowActivate, renameSelected, t]);
 
   const handleToolbar = useCallback(
     (a: ToolbarAction) => {
@@ -283,31 +307,17 @@ export default function App() {
         case "pause":
           store.bulk((id) => store.pause(id));
           break;
-        case "stop":
-          store.bulk((id) => store.cancel(id));
-          break;
-        case "forceStart":
-          store.bulk((id) => store.forceStart(id));
-          break;
         case "delete":
           store.bulk((id) => store.remove(id));
           break;
         case "stopAll":
           void store.stopAll();
           break;
-        case "deleteAll":
-          if (window.confirm("Delete all completed downloads?")) {
-            void store.clearFinished();
-          }
-          break;
         case "options":
           setOptionsOpen(true);
           break;
         case "scheduler":
           setSchedulerOpen(true);
-          break;
-        case "queues":
-          setQueuesOpen(true);
           break;
       }
     },
@@ -334,7 +344,12 @@ export default function App() {
         onSettings={() => setOptionsOpen(true)}
         onHistory={() => setHistoryOpen(true)}
         onAbout={() => setAboutOpen(true)}
-        onOpenProps={() => setPropsId(0)}
+        onOpenProps={() => {
+          const id = Array.from(store.selected)[0];
+          if (id !== undefined) setPropsId(id);
+        }}
+        detailsOpen={detailsOpen}
+        onToggleDetails={() => setDetailsOpen((open) => !open)}
       />
       <Toolbar store={store} onAction={handleToolbar} />
       <div className="flex min-h-0 flex-1">
@@ -348,7 +363,36 @@ export default function App() {
           effectiveSpeed={(q: string) => store.effectiveSpeed[q] ?? 0}
           activeProfiles={store.activeProfiles}
         />
-        <main className="min-w-0 flex-1 overflow-auto">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--table-bg)]">
+          <div className="flex h-9 shrink-0 items-center gap-3 border-b border-[var(--chrome-line)] bg-[var(--chrome)] px-3 text-xs text-txt-dim">
+            <span className="font-medium text-txt">Downloads</span>
+            <span>{store.filtered.length} result{store.filtered.length === 1 ? "" : "s"}</span>
+            {store.search && <span className="truncate text-gray-500">for “{store.search}”</span>}
+            <div className="flex-1" />
+            <label className="flex items-center gap-2">
+              <span className="sr-only">Filter downloads by status</span>
+              <select
+                aria-label="Filter downloads by status"
+                className="h-6 rounded-[2px] border border-white/10 bg-surface-2 px-2 text-xs text-txt-dim outline-none focus:border-[var(--accent)]"
+                value={store.sidebarKey.kind === "status" ? String(store.sidebarKey.value) : "all"}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "all") {
+                    store.setSidebarKey({ kind: "all" });
+                  } else if (value === "unfinished" || value === "paused" || value === "finished" || value === "failed") {
+                    store.setSidebarKey({ kind: "status", value });
+                  }
+                }}
+              >
+                <option value="all">All statuses</option>
+                <option value="unfinished">Active</option>
+                <option value="paused">Paused</option>
+                <option value="finished">Finished</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
           <DownloadTable
             tasks={store.tasks}
             grouped={store.grouped}
@@ -356,21 +400,47 @@ export default function App() {
             sort={store.sort}
             onSortChange={store.setSort}
             onSelect={onSelect}
+            onRetry={(id) => store.redownload(id)}
+            onToggleAll={() => {
+              const ids = store.filtered.map((task) => task.id);
+              if (ids.length > 0 && ids.every((id) => store.selected.has(id))) {
+                store.clearSelection();
+              } else if (ids.length > 0) {
+                store.selectOnly(ids[0]);
+                for (const id of ids.slice(1)) store.toggleSelect(id);
+              }
+            }}
             onContextMenu={onRowContext}
             onRowActivate={onRowActivate}
             groupBy={store.groupBy}
+            speedHistory={store.getSpeedHistory}
+            sidebarKey={store.sidebarKey}
+            search={store.search}
           />
+          </div>
        </main>
-     </div>
+        {/* Phase 3A: mount DetailsPanel for the selected download. Was
+            imported-but-dead; now lives to the right of the table
+            and shows quick info (filename, size, status, speed, ETA,
+            category, queue, source, destination) without forcing the
+            user to open the full Properties dialog. */}
+        {detailsOpen && (
+          <DetailsPanel
+            store={store}
+            onOpenProps={(id) => setPropsId(id)}
+            onClose={() => setDetailsOpen(false)}
+          />
+        )}
+      </div>
       <StatusBar store={store} />
 
       {dragHover && (
         <div className="drop-overlay" aria-hidden>
           <div className="drop-overlay__box">
-            <div className="drop-overlay__icon">Drop URL or URL-list file</div>
+            <div className="drop-overlay__icon">{t("drop.title")}</div>
             <div className="drop-overlay__sub">
-              Drop a single URL to open Add Download.<br />
-              Drop multiple URLs or a .txt list to open Batch.
+              {t("drop.sub1")}<br />
+              {t("drop.sub2")}
            </div>
          </div>
        </div>
@@ -412,16 +482,20 @@ export default function App() {
           onClose={() => setGrabberOpen(false)}
           onGrab={async (url, rules, limit) => await store.grabSiteWithRules(url, limit, rules)}
           onAdd={(links) => {
-            for (const l of links) {
-              void store.add({
-                url: l.url,
-                filename: l.filename,
-                category: l.category,
-                queue: l.queue,
-                save_dir: l.save_dir || undefined,
-                start_immediately: true,
-              });
-            }
+            // Phase 3C: hand the whole selected set to addBatch so
+            // a single bad URL doesn't abort the rest and so the
+            // user gets per-row results back. Each link carries
+            // its own queue / category / save_dir as chosen in
+            // the grabber table.
+            const nds = links.map((l) => ({
+              url: l.url,
+              filename: l.filename,
+              category: l.category ?? undefined,
+              queue: l.queue ?? undefined,
+              save_dir: l.save_dir || undefined,
+              start_immediately: true,
+            }));
+            void store.addBatch(nds);
           }}
           queues={(store.queues ?? []).map((q) => ({ name: q.name, label: q.label }))}
           categories={(store.categories ?? []).map((c) => ({ name: c.name, label: c.label }))}
@@ -432,6 +506,13 @@ export default function App() {
       {queuesOpen && <QueuesPanel store={store} onClose={() => setQueuesOpen(false)} />}
       {historyOpen && <HistoryPanel store={store} onClose={() => setHistoryOpen(false)} />}
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+      {segmentsId !== null && (
+        <IDMSegmentsDialog
+          store={store}
+          id={segmentsId}
+          onClose={() => setSegmentsId(null)}
+        />
+      )}
       {propsId !== null && (
         <PropertiesDialog store={store} id={propsId} onClose={() => setPropsId(null)} />
       )}
