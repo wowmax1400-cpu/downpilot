@@ -869,23 +869,21 @@ export function useDownloads() {
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: tasks.length };
     for (const t of tasks) {
-      c[t.status] = (c[t.status] ?? 0) + 1;
-      if (t.status !== "completed" && t.status !== "cancelled")
-        c.unfinished = (c.unfinished ?? 0) + 1;
-      else if (t.status === "completed") c.finished = (c.finished ?? 0) + 1;
-      if (t.status === "scheduled") c.scheduled = (c.scheduled ?? 0) + 1;
+      // UI-fused status (matches DownloadTable.renderStatus): a paused
+      // row whose bytes already cover total_size renders Complete per
+      // spec — tally it as completed so bar counters match the table.
+      let st = t.status;
+      if (st === "paused" && t.total_size > 0 && t.downloaded >= t.total_size) st = "completed";
+      c[st] = (c[st] ?? 0) + 1;
+      if (st !== "completed" && st !== "cancelled") c.unfinished = (c.unfinished ?? 0) + 1;
+      else if (st === "completed") c.finished = (c.finished ?? 0) + 1;
+      if (st === "failed") c.failed = (c.failed ?? 0) + 1;
+      if (st === "scheduled") c.scheduled = (c.scheduled ?? 0) + 1;
       // Per-category badge counts. Sidebar renders `cat:<name>` for
       // both built-in and user categories (extension-derived, i.e. the
       // engine's guess_category output).
       c[`cat:${t.category}`] = (c[`cat:${t.category}`] ?? 0) + 1;
     }
-    // Derived buckets computed AFTER the tally loop. c.paused is
-    // already the raw "paused" tally from c[t.status] above, so
-    // incrementing it inside the loop double-counted every paused row
-    // (2 paused rows rendered as "Paused: 4" in the status bar). Fold
-    // "stopped" into the paused bucket and normalise "failed" instead.
-    c.paused = (c.paused ?? 0) + (c.stopped ?? 0);
-    c.failed = c.failed ?? 0;
     return c;
   }, [tasks]);
 

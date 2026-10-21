@@ -214,7 +214,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="flex w-[188px] shrink-0 flex-col overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)]">
+    <aside className="flex w-[216px] shrink-0 flex-col overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)]">
       {/* ▼ 📁 All Downloads + nested file-type categories */}
         <div className="flex flex-col gap-0 px-1.5 pb-0.5">
         <SectionHeader id="categories" title="Categories" />
