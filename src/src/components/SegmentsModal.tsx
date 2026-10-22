@@ -172,7 +172,7 @@ function SegmentRow({ s }: { s: SegmentSnapshot }) {
         <div
           className={
             "h-full rounded-[1px] transition-[width] duration-300 " +
-            (complete ? "bg-emerald-500/80" : "bg-indigo-400/80")
+            (complete ? "bg-emerald-500/80" : "bg-[rgb(59,130,246,0.8)]")
           }
           style={{ width: `${pct}%` }}
         />
@@ -195,6 +195,6 @@ function overallFill(status: string): string {
     case "paused":
       return "bg-amber-500/70";
     default:
-      return "bg-indigo-400/80";
+      return "bg-[rgb(59,130,246,0.8)]";
   }
 }

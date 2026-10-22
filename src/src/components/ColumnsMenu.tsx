@@ -98,7 +98,7 @@ export function ColumnsMenu({
                 type="checkbox"
                 checked={visible}
                 readOnly
-                className="h-3 w-3 accent-indigo-500"
+                className="h-3 w-3 accent-[var(--accent)]"
                 tabIndex={-1}
               />
             </span>

@@ -100,7 +100,7 @@ function Btn({ icon, label, onClick, disabled, variant = "default", title }: Btn
     "inline-flex h-[24px] items-center gap-1.5 rounded-[2px] border border-transparent px-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40";
   const color =
     variant === "accent"
-      ? "text-indigo-400 hover:bg-indigo-500/10"
+      ? "text-[var(--accent-text)] hover:bg-[var(--accent-soft)]"
       : variant === "danger"
       ? "text-red-400 hover:bg-red-500/10"
       : "text-txt-dim hover:bg-white/5 hover:text-txt";

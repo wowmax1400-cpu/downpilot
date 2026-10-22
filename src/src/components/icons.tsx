@@ -238,7 +238,7 @@ export const FILE_ICON_COLOR: Record<string, string> = {
   archive: "text-amber-400",
   document: "text-sky-400",
   program: "text-emerald-400",
-  image: "text-violet-400",
+  image: "text-cyan-400",
   disk: "text-orange-400",
 };
 

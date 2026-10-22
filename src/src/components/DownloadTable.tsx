@@ -307,7 +307,7 @@ function Header({
           ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
           onChange={onToggleAll}
           onClick={(e) => e.stopPropagation()}
-          className="h-3.5 w-3.5 accent-indigo-500"
+          className="h-3.5 w-3.5 accent-[var(--accent)]"
         />
       </div>
       {visible.map((id, i) => {
