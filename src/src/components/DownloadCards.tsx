@@ -314,7 +314,7 @@ function Card({
         </div>
       </header>
 
-      {/* ---- progress ---- */}
+      {/* ---- progress line ---- */}
       <div className="card__progress">
         <div className="card__track">
           <div
@@ -332,18 +332,32 @@ function Card({
           label="Done"
           value={total > 0 ? `${formatBytes(done)}` : "—"}
         />
-        <Metric label="Left" value={remainingText} />
         <Metric label="Speed" value={speedText} />
         <Metric label="ETA" value={etaText} />
       </footer>
 
       {isFailed && t.error && (
         <p className="card__error" title={t.error}>
-          {t.error}
+          {cleanError(t.error)}
         </p>
       )}
     </article>
   );
+}
+
+function cleanError(err: string): string {
+  // Drop the generic Rust/reqwest prelude so the user sees only the
+  // actionable part — the host, path, or status code.
+  // e.g. "error sending request for url (https://...): connection refused"
+  //   -> "connection refused"
+  const stripped = err
+    .replace(/^error sending request for url\s*\(\s*https?:\/\/[^)]+\)\s*:\s*/i, "")
+    .replace(/^error sending request for url\s*\(\s*https?:\/\/[^)]+\)\s*/i, "")
+    .replace(/^error sending request for url\s*/i, "")
+    .replace(/^hyper error:\s*/i, "")
+    .replace(/^request error \(cause:\s*[^)]+\):\s*/i, "")
+    .trim();
+  return stripped.length > 8 ? stripped : err;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
