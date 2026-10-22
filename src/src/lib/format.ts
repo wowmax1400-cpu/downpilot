@@ -77,11 +77,15 @@ export function formatDateTime(ts: number): string {
 export function formatDateTimeShort(ts: number): string {
   if (!ts || !isFinite(ts) || ts <= 0) return "—";
   const d = new Date(ts * 1000);
+  const y = d.getFullYear();
+  const cy = new Date().getFullYear();
   const mon = d.toLocaleDateString(undefined, { month: "short" });
   const day = String(d.getDate()).padStart(2, "0");
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${mon} ${day} ${hh}:${mm}`;
+  // Same-year dates drop the year (dense column rule); older entries
+  // carry it so "Sep 02" from 2025 is never mistaken for this year.
+  return y === cy ? `${mon} ${day} ${hh}:${mm}` : `${mon} ${day} ${y} ${hh}:${mm}`;
 }
 
 export function formatDuration(secs: number | null | undefined): string {

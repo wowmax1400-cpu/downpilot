@@ -421,7 +421,7 @@ function ResizeHandle({
   return (
     <div
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-indigo-500/30"
+      className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-cyan-500/30"
       title="Drag to resize"
     />
   );
@@ -466,8 +466,8 @@ function Row({
   return (
     <div
       className={
-        "group relative grid cursor-default items-center gap-x-0 border-b border-[var(--line-soft)] bg-[var(--table-bg)] px-0 py-[1px] text-xs transition-colors hover:bg-[var(--row-hover)] " +
-        (selected ? "bg-[var(--accent-soft)]" : "")
+        "group relative grid cursor-default items-center gap-x-0 border-b border-[var(--line-soft)] bg-[var(--surface)] px-1 py-[7px] text-xs transition-colors hover:bg-[var(--surface-2)] " +
+        (selected ? "!bg-[rgba(34,211,238,0.10)]" : "")
       }
       style={{ gridTemplateColumns: gridTemplate(widths, visible) }}
       role="row"
@@ -502,10 +502,10 @@ function Row({
         type="button"
         aria-label={selected ? `Deselect ${t.filename}` : `Select ${t.filename}`}
         aria-pressed={selected}
-        className={`h-3.5 w-3.5 rounded-none border text-[9px] leading-none transition-colors ${
+        className={`h-4 w-4 rounded-[4px] border text-[9px] leading-none transition-colors ${
           selected
-            ? "border-indigo-400 bg-indigo-500 text-white"
-            : "border-slate-600 bg-slate-900/80 text-transparent hover:border-indigo-400"
+            ? "border-cyan-400 bg-cyan-500 text-white"
+            : "border-slate-600 bg-slate-900/80 text-transparent hover:border-cyan-400"
         }`}
         onClick={(e) => {
           e.stopPropagation();
@@ -603,8 +603,9 @@ function renderCell(
           className="flex"
           title={title}
         >
-          <span className={`text-[11.5px] leading-none ${statusBadge(statusForUi)}`}>
-            {label}
+          <span className={`inline-flex items-center gap-1 text-[11.5px] leading-none ${statusBadge(statusForUi)}`}>
+            <span aria-hidden="true" className="w-[10px] text-center">{statusGlyph(statusForUi)}</span>
+            <span>{label}</span>
           </span>
           {t.force_started && (
             <span
@@ -747,24 +748,47 @@ function ProgressBar({ pct, status }: { pct: number; status: string }) {
       </div>
     );
   }
-  // Flat utilitarian fills, no gradient, no rounding (refactor rule 1/4).
+  // Soft rounded track + gradient fill (v2 card language); paused/failed
+  // keep flat semantic hues so state stays readable at a glance.
   const fill =
     status === "paused"
       ? "bg-amber-500"
       : status === "failed"
       ? "bg-red-500"
-      : "bg-[var(--accent)]";
+      : "bg-gradient-to-r from-cyan-400 to-blue-500";
   return (
-    <div className="h-[4px] w-full overflow-hidden rounded-none bg-[var(--progress-track)]">
+    <div className="h-[6px] w-full overflow-hidden rounded-full bg-[var(--progress-track)]">
       <div
-        className={`h-full rounded-none ${fill}`}
+        className={`h-full rounded-full transition-[width] duration-300 ${fill}`}
         style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
       />
     </div>
   );
 }
 
-/** Flat status text colors — classic grid: no pill, no background. */
+/** Fixed-width status glyph (color-blind safe: shape differs per state,
+ *  not just hue). */
+function statusGlyph(s: string): string {
+  switch (s) {
+    case "downloading":
+      return "▶";
+    case "completed":
+      return "✓";
+    case "paused":
+      return "⏸";
+    case "failed":
+      return "✗";
+    case "queued":
+    case "scheduled":
+      return "◷";
+    case "stopped":
+      return "■";
+    case "cancelled":
+    default:
+      return "·";
+  }
+}
+
 function statusBadge(s: string): string {
   switch (s) {
     case "downloading":

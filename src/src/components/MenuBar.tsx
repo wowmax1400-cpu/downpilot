@@ -244,52 +244,6 @@ export function MenuBar(props: Props) {
           ]}
         />
       </ul>
-      <SearchBox store={store} />
-    </div>
-  );
-}
-
-function SearchBox({ store }: { store: DownloadsStore }) {
-  const [value, setValue] = useState(store.search);
-  const ref = useRef<HTMLInputElement | null>(null);
-  useEffect(() => setValue(store.search), [store.search]);
-  useEffect(() => {
-    const onFocus = () => ref.current?.focus();
-    document.addEventListener("downpilot:focus-search", onFocus);
-    return () => document.removeEventListener("downpilot:focus-search", onFocus);
-  }, []);
-  return (
-    <div className="menubar__search">
-      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <circle cx="7" cy="7" r="4.5" />
-        <path d="M10.5 10.5l3 3" />
-      </svg>
-      <input
-        ref={ref}
-        type="text"
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          store.setSearch(e.target.value);
-        }}
-        placeholder="Search downloads…"
-        title="Search supports: bare text, since:YYYY-MM-DD, until:YYYY-MM-DD, today, week"
-        className="menubar__search-input"
-      />
-      {value && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          className="menubar__search-clear"
-          onClick={() => {
-            setValue("");
-            store.setSearch("");
-            ref.current?.focus();
-          }}
-        >
-          ×
-        </button>
-      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { MenuBar } from "./components/MenuBar";
 import { Toolbar, type ToolbarAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
+import { DownloadCards } from "./components/DownloadCards";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { StatusBar } from "./components/StatusBar";
 import { ContextMenu } from "./components/ContextMenu";
@@ -73,6 +74,24 @@ export default function App() {
     null
   );
   const [dragHover, setDragHover] = useState(false);
+  /** List layout: "cards" is the modern panel default, "table" is the
+   *  dense column grid. Persisted so the choice survives restarts. */
+  const [viewMode, setViewMode] = useState<"cards" | "table">(() => {
+    try {
+      const v = localStorage.getItem("downpilot.view.mode");
+      return v === "table" ? "table" : "cards";
+    } catch {
+      return "cards";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("downpilot.view.mode", viewMode);
+    } catch {
+      // Ignore unavailable storage.
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     try {
@@ -352,7 +371,7 @@ export default function App() {
         onToggleDetails={() => setDetailsOpen((open) => !open)}
       />
       <Toolbar store={store} onAction={handleToolbar} />
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 gap-3 p-3">
         <Sidebar
           active={store.sidebarKey}
           onSelect={store.setSidebarKey}
@@ -363,12 +382,67 @@ export default function App() {
           effectiveSpeed={(q: string) => store.effectiveSpeed[q] ?? 0}
           activeProfiles={store.activeProfiles}
         />
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--table-bg)]">
-          <div className="flex h-9 shrink-0 items-center gap-3 border-b border-[var(--chrome-line)] bg-[var(--chrome)] px-3 text-xs text-txt-dim">
-            <span className="font-medium text-txt">Downloads</span>
-            <span>{store.filtered.length} result{store.filtered.length === 1 ? "" : "s"}</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          {/* KPI strip — card/panel language: four sibling stat panels. */}
+          <div className="grid shrink-0 grid-cols-4 gap-3">
+            {[
+              { k: "Total", v: store.counts.all ?? 0, tone: "text-txt", sub: "downloads" },
+              { k: "Active", v: store.stats.activeCount, tone: "text-[var(--success)]", sub: "transferring" },
+              { k: "Unfinished", v: store.counts.unfinished ?? 0, tone: "text-[var(--warning)]", sub: "not completed" },
+              { k: "Failed", v: store.counts.failed ?? 0, tone: "text-[var(--danger)]", sub: "need retry" },
+            ].map((s) => (
+              <div
+                key={s.k}
+                className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow)]"
+              >
+                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-faint)]">
+                  {s.k}
+                </div>
+                <div className={`mt-1 text-[22px] font-bold leading-none tabular-nums ${s.tone}`}>
+                  {s.v}
+                </div>
+                <div className="mt-1 text-[11px] text-[var(--text-faint)]">{s.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)]">
+          <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--line)] px-4 text-xs text-txt-dim">
+            <span className="text-[13px] font-semibold text-txt">Downloads</span>
+            <span className="rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[11px] font-medium tabular-nums">
+              {store.filtered.length}
+            </span>
             {store.search && <span className="truncate text-gray-500">for “{store.search}”</span>}
             <div className="flex-1" />
+            {/* Layout switch: panel grid vs dense column grid. */}
+            <div className="flex items-center rounded-[var(--radius-sm)] border border-[var(--line)] bg-[var(--surface-2)] p-[2px]">
+              <button
+                type="button"
+                onClick={() => setViewMode("cards")}
+                aria-pressed={viewMode === "cards"}
+                title="Panel view"
+                className={`rounded-[6px] px-2 py-[3px] text-[11px] font-semibold transition-colors ${
+                  viewMode === "cards"
+                    ? "bg-[var(--surface-4)] text-[var(--accent-text)]"
+                    : "text-txt-faint hover:text-txt"
+                }`}
+              >
+                Panels
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("table")}
+                aria-pressed={viewMode === "table"}
+                title="Table view"
+                className={`rounded-[6px] px-2 py-[3px] text-[11px] font-semibold transition-colors ${
+                  viewMode === "table"
+                    ? "bg-[var(--surface-4)] text-[var(--accent-text)]"
+                    : "text-txt-faint hover:text-txt"
+                }`}
+              >
+                Table
+              </button>
+            </div>
             <label className="flex items-center gap-2">
               <span className="sr-only">Filter downloads by status</span>
               <select
@@ -392,7 +466,24 @@ export default function App() {
               </select>
             </label>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
+          {viewMode === "cards" ? (
+            <DownloadCards
+              tasks={store.tasks}
+              grouped={store.grouped}
+              selected={store.selected}
+              onSelect={onSelect}
+              onRetry={(id) => store.redownload(id)}
+              onContextMenu={onRowContext}
+              onRowActivate={onRowActivate}
+              onPause={(id) => store.pause(id)}
+              onResume={(id) => store.resume(id)}
+              onRemove={(id) => void store.remove(id)}
+              sidebarKey={store.sidebarKey}
+              search={store.search}
+              speedHistory={store.getSpeedHistory}
+            />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto">
           <DownloadTable
             tasks={store.tasks}
             grouped={store.grouped}
@@ -418,6 +509,7 @@ export default function App() {
             search={store.search}
           />
           </div>
+          )}
        </main>
         {/* Phase 3A: mount DetailsPanel for the selected download. Was
             imported-but-dead; now lives to the right of the table
@@ -431,6 +523,7 @@ export default function App() {
             onClose={() => setDetailsOpen(false)}
           />
         )}
+      </div>
       </div>
       <StatusBar store={store} />
 

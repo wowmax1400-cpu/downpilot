@@ -877,8 +877,9 @@ export function useDownloads() {
       c[st] = (c[st] ?? 0) + 1;
       if (st !== "completed" && st !== "cancelled") c.unfinished = (c.unfinished ?? 0) + 1;
       else if (st === "completed") c.finished = (c.finished ?? 0) + 1;
-      if (st === "failed") c.failed = (c.failed ?? 0) + 1;
-      if (st === "scheduled") c.scheduled = (c.scheduled ?? 0) + 1;
+      // c.failed / c.scheduled already come from the per-status tally
+      // above — incrementing them again double-counted (KPI showed
+      // FAILED 8 for 4 failed tasks).
       // Per-category badge counts. Sidebar renders `cat:<name>` for
       // both built-in and user categories (extension-derived, i.e. the
       // engine's guess_category output).

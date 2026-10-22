@@ -17,6 +17,56 @@ import {
 } from "./icons";
 import type { DownloadsStore } from "../store/useDownloads";
 import type { AppSettings } from "../types";
+import { useEffect, useRef, useState } from "react";
+
+/** Toolbar search — lives on the right of the utility strip (pro app
+ *  convention: actions left, filter right). Owns its input state and
+ *  mirrors store.search; App still dispatches
+ *  `downpilot:focus-search` for Ctrl+F. */
+function ToolbarSearch({ store }: { store: DownloadsStore }) {
+  const [value, setValue] = useState(store.search);
+  const ref = useRef<HTMLInputElement | null>(null);
+  useEffect(() => setValue(store.search), [store.search]);
+  useEffect(() => {
+    const onFocus = () => ref.current?.focus();
+    document.addEventListener("downpilot:focus-search", onFocus);
+    return () => document.removeEventListener("downpilot:focus-search", onFocus);
+  }, []);
+  return (
+    <div className="flex h-[22px] w-[188px] max-w-[34vw] items-center gap-1.5 border border-[var(--line)] bg-[var(--surface-2)] pl-1.5 pr-1 focus-within:border-[var(--accent)]">
+      <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-txt-faint" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <circle cx="7" cy="7" r="4.5" />
+        <path d="M10.5 10.5l3 3" />
+      </svg>
+      <input
+        ref={ref}
+        type="text"
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          store.setSearch(e.target.value);
+        }}
+        placeholder="Search downloads…"
+        title="Search supports: bare text, since:YYYY-MM-DD, until:YYYY-MM-DD, today, week"
+        className="h-full min-w-0 flex-1 border-0 bg-transparent text-[11.5px] text-[var(--text)] outline-none placeholder:text-txt-faint"
+      />
+      {value && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          className="grid h-[15px] w-[15px] shrink-0 place-items-center border-0 bg-transparent p-0 text-[13px] leading-none text-txt-faint hover:text-[var(--text)]"
+          onClick={() => {
+            setValue("");
+            store.setSearch("");
+            ref.current?.focus();
+          }}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
 
 export type ToolbarAction =
   | "add"
@@ -189,6 +239,7 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
         />
 
         <div className="flex-1" />
+        <ToolbarSearch store={store} />
         <BandwidthSelect
           settings={store.settings}
           onChange={(kbps) => store.setBandwidth(kbps)}
