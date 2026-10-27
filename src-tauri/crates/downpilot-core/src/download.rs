@@ -681,11 +681,16 @@ impl ChunkDownloader {
                 self.throttle(chunk.len() as u64).await;
                 file.write_all(&chunk).await.map_err(map_io)?;
                 done += chunk.len() as u64;
+                // Cap reported bytes at the final-file length so a server that
+                // ignores Range and re-sends the full body cannot inflate the
+                // cumulative counter (task 390: downloaded reported 1.37 GB
+                // while disk held 75.6 MB). Mirrors the chunked guard.
+                let reported = if total > 0 { (done as i64).min(total) as u64 } else { done };
                 if last_emit.elapsed() >= Duration::from_millis(150) {
                     last_emit = std::time::Instant::now();
                     let _ = tx.send(EngineEvent::Progress {
                         id: task.id,
-                        downloaded: done as i64,
+                        downloaded: reported as i64,
                         total,
                         speed_bps: 0.0,
                     });
@@ -838,7 +843,13 @@ impl ChunkDownloader {
                             Err(e) => return Err(DownloadError::Reqwest(e)),
                         };
                         throttle_write(&mut file, &mut done, &chunk, &speed_limit).await?;
-                        chunk_tx.send((i, done)).ok();
+                        // Cap reported bytes at the segment end so a server that
+                        // ignores Range and re-sends the full file cannot inflate
+                        // the cumulative counter. The excess bytes are already
+                        // written to disk by throttle_write; this only prevents a
+                        // bogus value from propagating to the DB and UI.
+                        let capped = (end.saturating_sub(start) + 1).min(done);
+                        chunk_tx.send((i, capped)).ok();
                     }
                     file.flush().await?;
                     // Clean TCP close before the segment was fully served:
