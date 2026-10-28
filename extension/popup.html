@@ -124,6 +124,13 @@
       .icon-btn.danger:hover { background: rgba(248,113,113,0.2); color: #f87171; }
       .icon-btn:disabled { opacity: 0.3; cursor: default; }
       .icon-btn:disabled:hover { background: rgba(255,255,255,0.06); color: #9d9da8; }
+      .skip-row {
+        display: flex; align-items: center; gap: 6px;
+        padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+        font-size: 12px;
+      }
+      .skip-row:last-child { border-bottom: none; }
+      .skip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     </style>
   </head>
   <body>
@@ -137,6 +144,11 @@
     </div>
     <div class="mode">Capture mode: <b id="modeText">—</b></div>
     <button id="pauseBtn">Pause capture</button>
+
+    <div class="section">
+      <div class="section-head"><span>Skipped sites</span></div>
+      <ul id="skips" style="list-style:none;margin:0;padding:0;font-size:12px;"></ul>
+    </div>
 
     <div class="section">
       <div class="section-head">

@@ -44,12 +44,52 @@
     } else {
       setEmpty(connected ? "No tasks yet" : "Start DownPilot to see downloads", !connected);
     }
+    renderSkips();
     if (connected) refreshList();
   });
 
   function applyPaused() {
     pauseBtn.textContent = paused ? "Resume capture" : "Pause capture";
     if (modeText && paused) modeText.textContent = "PAUSED";
+  }
+
+  // Row for a skipped domain/extension, with an un-skip button.
+  function renderSkips() {
+    const el = document.getElementById("skips");
+    if (!el) return;
+    send("status").then((resp) => {
+      const sk = (resp && resp.alwaysSkip) || { domains: [], exts: [] };
+      const dd = sk.domains || [], de = sk.exts || [];
+      el.innerHTML = "";
+      if (dd.length === 0 && de.length === 0) {
+        const n = document.createElement("li");
+        n.textContent = "None — sites aren't being skipped";
+        n.style.color = "#8b8b95";
+        el.appendChild(n);
+      } else {
+        dd.forEach((d) => el.appendChild(skipRow(d, "domain")));
+        de.forEach((e) => el.appendChild(skipRow(e, "ext")));
+      }
+    });
+  }
+
+  function skipRow(value, kind) {
+    const li = document.createElement("li");
+    li.className = "skip-row";
+    const label = document.createElement("span");
+    label.className = "skip-label";
+    label.textContent = (kind === "domain" ? "site " : "ext ") + value;
+    const btn = document.createElement("button");
+    btn.className = "icon-btn";
+    btn.title = "Remove from skip list";
+    btn.textContent = "✕";
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      send("removeSkip", { [kind]: value }).then(() => renderSkips());
+    });
+    li.appendChild(label);
+    li.appendChild(btn);
+    return li;
   }
 
   pauseBtn.addEventListener("click", () => {
@@ -261,7 +301,7 @@
 
   function doAction(action, id, btn) {
     if (btn) btn.disabled = true;
-    send("taskAction", { action, id }).then((resp) => {
+    send("taskAction", { type: action, id }).then((resp) => {
       if (!resp || !resp.ok) {
         if (btn) btn.disabled = false;
         // Show a brief inline error (replace badge area)

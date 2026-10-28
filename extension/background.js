@@ -42,6 +42,7 @@ let requestId = 0;
 function connect() {
   try {
     nmhPort = chrome.runtime.connectNative(NMH_NAME);
+    updateBadge();
     nmhPort.onMessage.addListener((msg) => {
       // Accept both `_req_id` (current) and `_reqId` (legacy) so a
       // version mismatch does not silently hang the user.
@@ -60,11 +61,13 @@ function connect() {
       }
       pendingRequests.clear();
       configLoaded = false;
+      updateBadge();
       setTimeout(connect, 3000);
     });
   } catch (e) {
     console.warn("DownPilot: NMH connect failed:", e);
     nmhPort = null;
+    updateBadge();
     setTimeout(connect, 5000);
   }
 }
@@ -261,6 +264,7 @@ async function decide(url) {
   if (config.mode === "off") return "skip";
   if (!isAllowListed(url)) return "skip";
   if (isExcluded(url)) return "skip";
+  if (isAlwaysSkipped(url)) return "skip";
   if (isAlwaysAllow(url)) return "capture";
   if (config.mode === "auto") return "capture";
   return "ask";
@@ -369,6 +373,9 @@ function wasCaptured(url) {
 chrome.downloads.onCreated.addListener((item) => {
   if (!item || !item.url) return;
   if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
+  // NB: blob:/data: downloads are in-memory objects the backend cannot
+  // re-fetch (no URL to hit), so they are left to Chrome. Streaming-site
+  // capture (MSE/HLS) happens via the content-script overlay instead.
 
   // Startup race: Chrome restores interrupted downloads the moment the
   // browser (re)starts, which is exactly when the persisted dedup state
@@ -464,10 +471,12 @@ function askUser(item) {
             { title: "Download" },
             { title: "Ignore" },
             { title: "Always download this type" },
+            { title: "Skip this site" },
           ]
         : [
             { title: "Try Download Anyway" },
             { title: "Ignore" },
+            { title: "Skip this site" },
           ];
       chrome.notifications.create(id, {
         type: "basic",
@@ -501,6 +510,7 @@ function askUser(item) {
           { title: "Download" },
           { title: "Ignore" },
           { title: "Always download this type" },
+          { title: "Skip this site" },
         ],
         priority: 1,
       });
@@ -560,8 +570,27 @@ chrome.notifications.onButtonClicked.addListener((notifId, btnIdx) => {
           takeover(item, { tryAnyway: item._probeFailed === true });
         });
       return;
+    } else {
+      // "Skip this site": record the domain in local alwaysSkip so future
+      // downloads from this domain are silently continued in Chrome (no ask).
+      const d = domainOf(item.url);
+      const e2 = extOf(item.url);
+      if (d) alwaysSkip.domains.add(d);
+      if (e2) alwaysSkip.exts.add(e2);
+      persistAlwaysSkip();
+      markCaptured(item.url);
+      return;
     }
-    takeover(item, { tryAnyway: item._probeFailed === true });
+  } else if (btnIdx === 3) {
+    // "Skip this site": record the domain in local alwaysSkip so future
+    // downloads from this domain are silently continued in Chrome (no ask).
+    const d = domainOf(item.url);
+    const e = extOf(item.url);
+    if (d) alwaysSkip.domains.add(d);
+    if (e) alwaysSkip.exts.add(e);
+    persistAlwaysSkip();
+    markCaptured(item.url);
+    return;
   } else {
     // Ignore. Remember the URL persistently so neither a Chrome retry
     // nor a browser restart re-prompts for this download.
@@ -603,11 +632,21 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === "setPaused") {
     config.userPaused = !!msg.value;
+    updateBadge();
+    sendResponse({ ok: true });
+    return;
+  }
+  if (msg.action === "removeSkip") {
+    const d = msg.domain;
+    const e = msg.ext;
+    if (d) alwaysSkip.domains.delete(d);
+    if (e) alwaysSkip.exts.delete(e);
+    persistAlwaysSkip();
     sendResponse({ ok: true });
     return;
   }
   if (msg.action === "refreshConfig") {
-    refreshConfig(true).then(() => sendResponse({ ok: true, config })).catch(() => sendResponse({ ok: false }));
+    refreshConfig(true).then(() => { updateBadge(); sendResponse({ ok: true, config }); }).catch(() => sendResponse({ ok: false }));
     return true;
   }
   if (msg.action === "analyze") {
@@ -641,8 +680,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
-  // taskAction: popup sends {action: "taskAction", action: "pause|resume|cancel", id}
-  // (the `action` field name is overloaded). The NMH `type` is the verb.
+  // taskAction: popup sends {action: "taskAction", type: "pause|resume|cancel", id}
+  // (the `action` field is the RPC tag). The NMH `type` is the verb.
   if (msg.action === "taskAction") {
     const t = msg.type || (msg.action !== "taskAction" ? msg.action : null);
     const valid = new Set(["pause", "resume", "cancel", "start"]);
@@ -656,6 +695,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 });
+
+function updateBadge() {
+  try {
+    if (config.userPaused) {
+      chrome.action?.setBadgeText?.({ text: "⏸" });
+      chrome.action?.setBadgeBackgroundColor?.({ color: "#f59e0b" });
+    } else if (!nmhPort) {
+      chrome.action?.setBadgeText?.({ text: "!" });
+      chrome.action?.setBadgeBackgroundColor?.({ color: "#ef4444" });
+    } else {
+      chrome.action?.setBadgeText?.({ text: "" });
+    }
+  } catch {
+    // badge API unavailable in this browser (e.g. Firefox MV3 without action)
+  }
+}
 
 function notify(title, message) {
   try {

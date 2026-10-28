@@ -159,6 +159,21 @@
     );
   }
 
+  // URL to send to the backend. A `blob:` / `data:` value is an in-memory
+  // object the yt-dlp backend cannot fetch — resolve to the page URL instead
+  // (yt-dlp extracts the real stream from the page, e.g. MSE/HLS on YouTube).
+  function backendUrl(url) {
+    if (!url) return url;
+    if (url.startsWith("blob:") || url.startsWith("data:")) {
+      try {
+        const p = new URL(window.location.href);
+        if (p.protocol === "http:" || p.protocol === "https:") return p.href;
+      } catch { /* unresolvable — fall through */ }
+      return window.location.href;
+    }
+    return url;
+  }
+
   function isDirectFile(url) {
     try {
       const p = new URL(url).pathname;
@@ -183,6 +198,7 @@
   }
 
   function sendDownload(url, formatId) {
+    const backend = backendUrl(url);
     const note = document.createElement("div");
     note.className = "dp-dropdown";
     note.innerHTML = '<div style="padding:10px;font-size:12px;color:#9d9da8">Sending to DownPilot…</div>';
@@ -191,7 +207,7 @@
     chrome.runtime.sendMessage(
       {
         action: "download",
-        url,
+        url: backend,
         format_id: formatId,
         referer: window.location.href,
         user_agent: navigator.userAgent,
@@ -231,7 +247,7 @@
     }, 8000);
 
     chrome.runtime.sendMessage(
-      { action: "analyze", url, cookies: document.cookie, referer: window.location.href, user_agent: navigator.userAgent },
+      { action: "analyze", url: backendUrl(url), cookies: document.cookie, referer: window.location.href, user_agent: navigator.userAgent },
       (resp) => {
         if (done) return;
         done = true;
@@ -395,7 +411,7 @@
           return;
         }
         chrome.runtime.sendMessage(
-          { action: "analyze", url, cookies: document.cookie, referer: window.location.href, user_agent: navigator.userAgent },
+          { action: "analyze", url: backendUrl(url), cookies: document.cookie, referer: window.location.href, user_agent: navigator.userAgent },
           (resp) => {
             if (!resp || !resp.ok || !resp.media) return;
             infoCache.set(url, resp.media);

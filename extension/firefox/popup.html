@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        width: 320px; padding: 12px; font-family: Inter, system-ui, sans-serif;
+        font-size: 13px; background: #0a0a0c; color: #e8e8ec;
+      }
+      .row { display: flex; align-items: center; gap: 6px; }
+      .logo { font-weight: 700; font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+      .logo span { color: #7c5cff; }
+      .status { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 6px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+      .dot.on { background: #34d399; }
+      .dot.off { background: #f87171; }
+      .mode { font-size: 11px; color: #9d9da8; margin-bottom: 10px; }
+      .mode b { color: #c4b5fd; }
+      button {
+        display: block; width: 100%; padding: 8px; border: none; border-radius: 6px;
+        background: #232329; color: #e8e8ec; font-size: 12px; font-weight: 600; cursor: pointer;
+        text-align: center; margin-bottom: 6px;
+      }
+      button:hover { background: #2c2c34; }
+      button.primary { background: #7c5cff; color: #fff; }
+      button.primary:hover { background: #6a4ce0; }
+      a#openBtn {
+        display:block;width:100%;padding:8px;border:none;border-radius:6px;background:#7c5cff;color:#fff;
+        font-size:12px;font-weight:600;cursor:pointer;text-align:center;text-decoration:none;
+      }
+      .footer { margin-top: 8px; font-size: 10px; color: #6b6b76; text-align: center; }
+
+      /* ---- Downloads list ---- */
+      .section {
+        margin-top: 10px; padding-top: 10px;
+        border-top: 1px solid rgba(255,255,255,0.06);
+      }
+      .section-head {
+        display: flex; align-items: center; justify-content: space-between;
+        font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+        color: #6b6b76; margin-bottom: 6px;
+      }
+      .section-head .refresh {
+        background: none; border: none; color: #6b6b76; font-size: 11px;
+        cursor: pointer; padding: 2px 4px; border-radius: 4px; margin: 0;
+        text-transform: none; letter-spacing: 0; font-weight: 500; width: auto;
+      }
+      .section-head .refresh:hover { color: #c4b5fd; background: rgba(124,92,255,0.1); }
+      .filters { display: flex; gap: 4px; margin-bottom: 6px; }
+      .chip {
+        flex: 1; padding: 4px 6px; border-radius: 4px; cursor: pointer;
+        font-size: 11px; font-weight: 600; text-align: center;
+        background: rgba(255,255,255,0.04); color: #9d9da8; border: none;
+        text-transform: uppercase; letter-spacing: 0.03em; margin: 0;
+      }
+      .chip:hover { background: rgba(255,255,255,0.08); color: #e8e8ec; }
+      .chip.active { background: rgba(124,92,255,0.18); color: #c4b5fd; }
+
+      .list {
+        max-height: 280px; overflow-y: auto;
+        scrollbar-width: thin; scrollbar-color: #2c2c34 transparent;
+        border: 1px solid rgba(255,255,255,0.06); border-radius: 6px;
+        background: rgba(0,0,0,0.2);
+      }
+      .list::-webkit-scrollbar { width: 6px; }
+      .list::-webkit-scrollbar-thumb { background: #2c2c34; border-radius: 3px; }
+      .list::-webkit-scrollbar-track { background: transparent; }
+      .empty { padding: 16px 8px; text-align: center; font-size: 11px; color: #6b6b76; }
+      .empty.error { color: #f87171; }
+
+      .item {
+        padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+        display: flex; align-items: center; gap: 6px;
+      }
+      .item:last-child { border-bottom: none; }
+      .item-main { flex: 1; min-width: 0; }
+      .item-name {
+        font-size: 12px; font-weight: 500; color: #e8e8ec;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        margin-bottom: 3px;
+      }
+      .item-meta {
+        display: flex; align-items: center; gap: 6px; font-size: 10px;
+        color: #9d9da8;
+      }
+      .item-bar {
+        flex: 1; height: 3px; background: rgba(255,255,255,0.08);
+        border-radius: 2px; overflow: hidden; min-width: 30px;
+      }
+      .item-bar > div {
+        height: 100%; background: linear-gradient(90deg, #7c5cff, #6a4ce0);
+        transition: width 0.2s;
+      }
+      .item-bar.indeterminate > div {
+        width: 30% !important; animation: indet 1.4s ease-in-out infinite;
+      }
+      @keyframes indet {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(400%); }
+      }
+      .item-pct { font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
+      .badge {
+        display: inline-block; padding: 1px 5px; border-radius: 3px;
+        font-size: 9px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.04em; line-height: 1.4;
+      }
+      .badge.dl { background: rgba(124,92,255,0.18); color: #c4b5fd; }
+      .badge.paused { background: rgba(251,191,36,0.18); color: #fbbf24; }
+      .badge.queued { background: rgba(255,255,255,0.08); color: #9d9da8; }
+      .badge.done { background: rgba(52,211,153,0.18); color: #34d399; }
+      .badge.failed { background: rgba(248,113,113,0.18); color: #f87171; }
+      .badge.stopped { background: rgba(148,163,184,0.18); color: #94a3b8; }
+      .badge.cancelled { background: rgba(148,163,184,0.18); color: #94a3b8; }
+
+      .item-actions { display: flex; gap: 2px; }
+      .icon-btn {
+        width: 22px; height: 22px; padding: 0; margin: 0;
+        background: rgba(255,255,255,0.06); border: none; border-radius: 4px;
+        color: #9d9da8; cursor: pointer; font-size: 11px; line-height: 1;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .icon-btn:hover { background: rgba(255,255,255,0.12); color: #e8e8ec; }
+      .icon-btn.danger:hover { background: rgba(248,113,113,0.2); color: #f87171; }
+      .icon-btn:disabled { opacity: 0.3; cursor: default; }
+      .icon-btn:disabled:hover { background: rgba(255,255,255,0.06); color: #9d9da8; }
+      .skip-row {
+        display: flex; align-items: center; gap: 6px;
+        padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+        font-size: 12px;
+      }
+      .skip-row:last-child { border-bottom: none; }
+      .skip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <div class="logo"><span>⬇</span> DownPilot</div>
+    <div class="row" style="justify-content: space-between;">
+      <div class="status">
+        <span class="dot off" id="dot"></span>
+        <span id="statusText">Not connected</span>
+      </div>
+      <button class="refresh" id="refreshBtn" style="display:none;width:auto;margin:0;padding:2px 8px;">↻</button>
+    </div>
+    <div class="mode">Capture mode: <b id="modeText">—</b></div>
+    <button id="pauseBtn">Pause capture</button>
+
+    <div class="section">
+      <div class="section-head"><span>Skipped sites</span></div>
+      <ul id="skips" style="list-style:none;margin:0;padding:0;font-size:12px;"></ul>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <span>Downloads</span>
+        <button class="refresh" id="refreshList">↻ Refresh</button>
+      </div>
+      <div class="filters">
+        <div class="chip active" data-filter="active">Active</div>
+        <div class="chip" data-filter="all">All</div>
+        <div class="chip" data-filter="done">Done</div>
+      </div>
+      <div class="list" id="list">
+        <div class="empty" id="emptyMsg">Loading…</div>
+      </div>
+    </div>
+
+    <a id="openBtn" href="#" style="margin-top:10px;">Open DownPilot</a>
+    <div class="footer">Configure rules in the app · Settings → Browser Integration</div>
+    <script src="popup.js"></script>
+  </body>
+</html>

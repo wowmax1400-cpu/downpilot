@@ -932,6 +932,17 @@ impl DownloadManager {
                 return Ok(existing);
             }
         }
+        // URL dedup fallback: when browser_dedup_id is absent (manual add,
+        // toolbar retry, or extension path that doesn't carry one), check
+        // whether a Failed/Paused/Stopped task with the same exact URL
+        // already exists. Returning it instead of inserting prevents
+        // duplicate rows when the user retries the same URL multiple times.
+        if let Ok(Some(existing)) = self.db.find_by_url(&nd.url) {
+            let st = existing.status.as_str();
+            if matches!(st, "failed" | "paused" | "stopped" | "cancelled") {
+                return Ok(existing.id);
+            }
+        }
         // Phase 3C: SiteRule.auto_capture enforcement. A site rule
         // can mark a host as "do not capture" — if the extension
         // submits a download for such a host, we refuse with a
