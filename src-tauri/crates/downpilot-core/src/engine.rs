@@ -937,10 +937,12 @@ impl DownloadManager {
         // whether a Failed/Paused/Stopped task with the same exact URL
         // already exists. Returning it instead of inserting prevents
         // duplicate rows when the user retries the same URL multiple times.
-        if let Ok(Some(existing)) = self.db.find_by_url(&nd.url) {
-            let st = existing.status.as_str();
-            if matches!(st, "failed" | "paused" | "stopped" | "cancelled") {
-                return Ok(existing.id);
+        if let Ok(Some(existing_id)) = self.db.find_by_url(&nd.url) {
+            if let Ok(Some(existing)) = self.db.get(existing_id) {
+                let st = existing.status.as_str();
+                if matches!(st, "failed" | "paused" | "stopped" | "cancelled") {
+                    return Ok(existing.id);
+                }
             }
         }
         // Phase 3C: SiteRule.auto_capture enforcement. A site rule
