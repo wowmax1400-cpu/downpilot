@@ -175,6 +175,9 @@ export interface GrabRules {
   exclude_domains: string[];
   min_size: number;
   max_size: number;
+  max_depth?: number;
+  max_pages?: number;
+  same_domain_only?: boolean;
 }
 
 export type ScheduleKind = "once" | "daily" | "weekly";

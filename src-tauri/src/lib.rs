@@ -4,7 +4,8 @@
 //! the `downpilot-nmh` relay can forward extension messages without any HTTP
 //! stack.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use downpilot_core::engine::DownloadManager;
 use downpilot_core::models::{EngineEvent, NewDownload, Status};
@@ -106,6 +107,9 @@ fn get_settings(state: State<'_, AppState>) -> downpilot_core::models::AppSettin
 
 #[tauri::command]
 fn set_setting(state: State<'_, AppState>, key: String, value: String) {
+    if key == "clipboard_monitor" {
+        CLIPBOARD_MONITOR_ACTIVE.store(value == "true", Ordering::Relaxed);
+    }
     state.manager.set_setting(&key, &value);
 }
 
@@ -286,6 +290,16 @@ fn stop_all(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 fn retry_all(state: State<'_, AppState>) -> Result<(), String> {
     state.manager.retry_all()
+}
+
+#[tauri::command]
+fn update_download_url(state: State<'_, AppState>, id: i64, new_url: String) -> Result<(), String> {
+    state.manager.update_url(id, &new_url)
+}
+
+#[tauri::command]
+fn update_download_cookies(state: State<'_, AppState>, id: i64, cookies: String) -> Result<(), String> {
+    state.manager.update_cookies(id, &cookies)
 }
 
 #[tauri::command]
@@ -555,8 +569,13 @@ fn scheduler_status(state: State<'_, AppState>) -> downpilot_core::models::Sched
     state.manager.scheduler_status()
 }
 
+static LAST_INTERNAL_COPY: Mutex<Option<String>> = Mutex::new(None);
+
 #[tauri::command]
 fn copy_text_to_clipboard(_state: State<'_, AppState>, text: String) -> Result<(), String> {
+    if let Ok(mut lock) = LAST_INTERNAL_COPY.lock() {
+        *lock = Some(text.trim().to_string());
+    }
     // Reuse the same wl-paste/xclip pipeline in reverse: spawn `wl-copy`
     // (Wayland) or feed stdin to `xclip -selection clipboard` (X11). This
     // avoids the window-focus side-effect that `arboard` triggers on some
@@ -670,17 +689,38 @@ async fn read_clipboard() -> Option<std::process::Output> {
 /// can't reliably detect that state from the app on this Wayland session, the
 /// monitor is OFF by default (`clipboard_monitor` setting). When `enabled` is
 /// false we never touch the clipboard, so context menus can never be dismissed.
-pub fn start_clipboard_monitor(handle: AppHandle, enabled: bool) {
-    if !enabled {
-        eprintln!(
-            "[clipboard-monitor] disabled (clipboard_monitor=false) — context-menu bug avoided"
-        );
-        return;
+static CLIPBOARD_MONITOR_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn is_downloadable_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") && !lower.starts_with("ftp://") {
+        return false;
     }
+    // Clean path without query or hash
+    let path = lower.split(['?', '#']).next().unwrap_or(&lower);
+    const EXTS: &[&str] = &[
+        ".zip", ".rar", ".7z", ".tar", ".gz", ".xz", ".bz2", ".zst", ".iso", ".img",
+        ".exe", ".msi", ".apk", ".deb", ".rpm", ".appimage", ".dmg", ".run", ".sh",
+        ".mp3", ".flac", ".wav", ".m4a", ".ogg", ".opus", ".aac",
+        ".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv", ".flv", ".m4v", ".ts", ".mpg",
+        ".pdf", ".epub", ".djvu", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv",
+        ".torrent", ".bin", ".dat"
+    ];
+    EXTS.iter().any(|ext| path.ends_with(ext))
+}
+
+pub fn start_clipboard_monitor(handle: AppHandle, enabled: bool) {
+    CLIPBOARD_MONITOR_ACTIVE.store(enabled, Ordering::Relaxed);
     tauri::async_runtime::spawn(async move {
-        let mut last: Option<String> = None;
+        // Seed initial clipboard content on startup so we don't pop up for existing clip
+        let mut last: Option<String> = {
+            read_clipboard().await.map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            if !CLIPBOARD_MONITOR_ACTIVE.load(Ordering::Relaxed) {
+                continue;
+            }
             // Read the clipboard with tokio::process + timeout + kill_on_drop.
             // Plain `wl-paste` reads the CLIPBOARD (Ctrl+C) selection only; we
             // never pass `-p`/`--primary`. The timeout kills the child if the
@@ -700,16 +740,19 @@ pub fn start_clipboard_monitor(handle: AppHandle, enabled: bool) {
                 continue;
             }
             last = Some(text.clone());
-            // Only react to content that looks like a single URL.
+
+            // Skip if this text was copied by DownPilot itself (e.g. "Copy URL" in context menu)
+            if let Ok(internal) = LAST_INTERNAL_COPY.lock() {
+                if let Some(copied) = internal.as_ref() {
+                    if *copied == text {
+                        continue;
+                    }
+                }
+            }
+
+            // Only react to content that looks like a downloadable URL.
             let trimmed = text.trim();
-            let lowered = trimmed.to_ascii_lowercase();
-            let looks_url = lowered.starts_with("http://")
-                || lowered.starts_with("https://")
-                || lowered.starts_with("ftp://")
-                || (trimmed.contains('.')
-                    && !trimmed.contains(char::is_whitespace)
-                    && trimmed.contains('/'));
-            if looks_url {
+            if is_downloadable_url(trimmed) {
                 let _ = handle.emit("downloads://clipboard", &trimmed);
             }
         }
@@ -766,6 +809,17 @@ enum NmhMessage {
     Cancel {
         id: i64,
     },
+    /// Delete a task permanently.
+    #[serde(rename = "delete", alias = "DELETE_DOWNLOAD")]
+    Delete {
+        id: i64,
+    },
+    /// Clear all completed and failed tasks permanently.
+    #[serde(rename = "clear_terminal", alias = "CLEAR_TERMINAL")]
+    ClearTerminal,
+    /// Return only active downloads.
+    #[serde(rename = "get_active_downloads", alias = "GET_ACTIVE_DOWNLOADS")]
+    GetActiveDownloads,
     /// Rescan the disk to recover the on-disk byte count for a paused task.
     Recheck {
         id: i64,
@@ -1154,6 +1208,53 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                 _req_id: req_id,
             },
         },
+        NmhMessage::Delete { id } => match manager.remove(id) {
+            Ok(()) => NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "id": id })),
+                error: None,
+                _req_id: req_id,
+            },
+            Err(e) => NmhResponse {
+                ok: false,
+                data: None,
+                error: Some(e),
+                _req_id: req_id,
+            },
+        },
+        NmhMessage::ClearTerminal => {
+            let tasks = manager.list();
+            for t in tasks {
+                if matches!(
+                    t.status,
+                    Status::Completed | Status::Failed | Status::Cancelled
+                ) {
+                    let _ = manager.remove(t.id);
+                }
+            }
+            NmhResponse {
+                ok: true,
+                data: Some(serde_json::json!({ "cleared": true })),
+                error: None,
+                _req_id: req_id,
+            }
+        }
+        NmhMessage::GetActiveDownloads => {
+            let tasks = manager.list();
+            let active_tasks: Vec<_> = tasks
+                .into_iter()
+                .filter(|t| t.status == Status::Downloading)
+                .collect();
+            let data = serde_json::to_value(&active_tasks)
+                .map(redact_browser_task_secrets)
+                .unwrap_or(serde_json::json!([]));
+            NmhResponse {
+                ok: true,
+                data: Some(data),
+                error: None,
+                _req_id: req_id,
+            }
+        }
         NmhMessage::Recheck { id } => match manager.recheck(id) {
             Ok(()) => NmhResponse {
                 ok: true,
@@ -1540,6 +1641,8 @@ pub fn run() {
             pause_all,
             stop_all,
             retry_all,
+            update_download_url,
+            update_download_cookies,
             redownload,
             move_to_queue,
             set_category,
@@ -1616,9 +1719,15 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 }
             }
             "pause_all" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let _ = state.manager.pause_all();
+                }
                 let _ = app.emit("tray://pause_all", ());
             }
             "resume_all" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let _ = state.manager.resume_all();
+                }
                 let _ = app.emit("tray://resume_all", ());
             }
             "quit" => {
@@ -1790,6 +1899,17 @@ mod req_id_compat {
     fn prefers_current_over_legacy() {
         let frame = br#"{"_req_id": 1, "_reqId": 2, "type": "ping"}"#;
         assert_eq!(extract_req_id(frame), Some(1));
+    }
+
+    #[test]
+    fn test_downloadable_url_filter() {
+        use super::is_downloadable_url;
+        assert!(is_downloadable_url("https://example.com/archive.zip"));
+        assert!(is_downloadable_url("https://example.com/video.mp4?token=123"));
+        assert!(is_downloadable_url("http://cdn.test/setup.exe#download"));
+        assert!(!is_downloadable_url("https://google.com/search?q=foo"));
+        assert!(!is_downloadable_url("https://github.com/rust-lang/rust"));
+        assert!(!is_downloadable_url("not a url at all"));
     }
 
     #[test]

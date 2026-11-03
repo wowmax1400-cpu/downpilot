@@ -5,15 +5,10 @@ import { applyTheme } from "./themes";
 import { I18nProvider } from "./i18n";
 import "./index.css";
 
-// Load persisted theme before first paint to avoid a flash of the default
-// theme. The real value comes from the backend in the Tauri app; in browser
-// preview we read localStorage directly.
+// Initialize theme from persisted setting or default to deep-midnight
 (function initTheme() {
-  const saved = localStorage.getItem("dp.theme");
-  const accent = localStorage.getItem("dp.accent");
-  if (saved || accent) {
-    applyTheme(saved || "deep-midnight", accent || undefined);
-  }
+  const saved = localStorage.getItem("downpilot.theme") || "deep-midnight";
+  applyTheme(saved);
 })();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

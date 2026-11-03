@@ -207,6 +207,30 @@ export function ContextMenu(props: Props) {
           onClick={() => act(store.redownload)}
           disabled={!canRedownload}
         />
+        <Item
+          label="Refresh Download Address…"
+          icon={<IconProperties size={13} />}
+          onClick={() => {
+            if (!single) return;
+            const newUrl = window.prompt("Enter new download address / URL:", single.url);
+            if (newUrl && newUrl.trim() && newUrl.trim() !== single.url) {
+              store.updateDownloadUrl(single.id, newUrl.trim()).then(() => store.resume(single.id));
+            }
+          }}
+          disabled={!single}
+        />
+        <Item
+          label="Update Session Cookies…"
+          icon={<IconProperties size={13} />}
+          onClick={() => {
+            if (!single) return;
+            const cookies = window.prompt("Paste session cookies (key=value; or Netscape format):", single.cookies || "");
+            if (cookies !== null) {
+              store.updateDownloadCookies(single.id, cookies).then(() => store.resume(single.id));
+            }
+          }}
+          disabled={!single}
+        />
         <Item divider />
         <Item
           label="Open File"

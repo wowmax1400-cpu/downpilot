@@ -93,11 +93,18 @@ export function formatDuration(secs: number | null | undefined): string {
 }
 
 /** Status -> human label (editable in one place). */
-export function statusLabel(status: string): string {
+export function statusLabel(status: string, error?: string | null): string {
+  if (status === "failed" && error) {
+    if (error.includes("403") || error.includes("Forbidden")) return "Error: Link Expired / 403";
+    if (error.includes("401") || error.includes("Unauthorized")) return "Error: Auth Required";
+    if (error.includes("404")) return "Error: File Not Found";
+    if (error.includes("disk") || error.includes("space")) return "Error: Disk Full";
+    if (error.includes("ChecksumMismatch")) return "Error: Hash Mismatch";
+  }
   switch (status) {
     case "queued": return "Queued";
     case "scheduled": return "Scheduled";
-    case "downloading": return "Downloading";
+    case "downloading": return "Receiving data...";
     case "paused": return "Paused";
     case "stopped": return "Stopped";
     case "completed": return "Complete";

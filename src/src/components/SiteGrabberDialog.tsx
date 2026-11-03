@@ -39,6 +39,9 @@ const DEFAULT_RULES: GrabRules = {
   exclude_domains: [],
   min_size: 0,
   max_size: 0,
+  max_depth: 0,
+  max_pages: 5,
+  same_domain_only: true,
 };
 
 type Row = GrabbedLink & {
@@ -324,6 +327,42 @@ export function SiteGrabberDialog({ open, onClose, onGrab, onAdd, queues, catego
                     setRules({ ...rules, max_size: Number(e.target.value) || 0 })
                   }
                 />
+              </Field>
+              <Field label="Crawl depth (0 = single page, 1 = 1 hop, etc.)">
+                <input
+                  type="number"
+                  min="0"
+                  max="5"
+                  className="input"
+                  value={rules.max_depth ?? 0}
+                  onChange={(e) =>
+                    setRules({ ...rules, max_depth: Number(e.target.value) || 0 })
+                  }
+                />
+              </Field>
+              <Field label="Max pages to crawl">
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  className="input"
+                  value={rules.max_pages ?? 5}
+                  onChange={(e) =>
+                    setRules({ ...rules, max_pages: Number(e.target.value) || 5 })
+                  }
+                />
+              </Field>
+              <Field label="Scope restriction">
+                <label className="check" style={{ marginTop: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={rules.same_domain_only ?? true}
+                    onChange={(e) =>
+                      setRules({ ...rules, same_domain_only: e.target.checked })
+                    }
+                  />
+                  <span>Stay on same domain only</span>
+                </label>
               </Field>
             </div>
           </div>

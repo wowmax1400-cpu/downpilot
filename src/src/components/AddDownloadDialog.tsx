@@ -124,7 +124,7 @@ export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: P
     <Dialog
       title="Add Download"
       onClose={onClose}
-      width={620}
+      width={600}
       footer={
         <>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
@@ -132,131 +132,159 @@ export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: P
         </>
       }
     >
-      <div className="form">
-        <Field label="URL">
-          <textarea
-            className="input input--area"
-            rows={2}
-            placeholder="https://example.com/file.zip"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onBlur={handleProbe}
-            autoFocus
-          />
-       </Field>
+      <div className="flex flex-col gap-2">
+        {/* File Information Section */}
+        <fieldset className="groupbox">
+          <legend>File Information</legend>
+          <div className="form-grid-kv">
+            <dt>Address (URL)</dt>
+            <dd>
+              <textarea
+                className="input input--area w-full"
+                rows={2}
+                placeholder="https://example.com/file.zip"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onBlur={handleProbe}
+                autoFocus
+              />
+            </dd>
 
-        <div className="probe-row">
-          <button
-            type="button"
-            className="btn btn--default btn--sm"
-            onClick={handleProbe}
-            disabled={probing || !url.trim()}
-          >
-            {probing ? "Probing..." : "Probe"}
-         </button>
-          {probe && (
-            <div className="probe-row__results">
-              <span className="probe-pill">
-                {probe.size > 0 ? formatBytes(probe.size) : "size unknown"}
-             </span>
-              {probe.content_type ? (
-                <span className="probe-pill">{probe.content_type}</span>
-              ) : null}
-              {probe.supports_resume ? (
-                <span className="probe-pill probe-pill--ok">resumable</span>
-              ) : null}
-           </div>
-          )}
-          {probeError ? (
-            <span className="probe-row__err">{probeError}</span>
-          ) : null}
-       </div>
+            <dt></dt>
+            <dd>
+              <div className="probe-row">
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={handleProbe}
+                  disabled={probing || !url.trim()}
+                >
+                  {probing ? "Probing..." : "Probe"}
+                </button>
+                {probe && (
+                  <div className="probe-row__results">
+                    <span className="probe-pill">
+                      {probe.size > 0 ? formatBytes(probe.size) : "size unknown"}
+                    </span>
+                    {probe.content_type ? (
+                      <span className="probe-pill">{probe.content_type}</span>
+                    ) : null}
+                    {probe.supports_resume ? (
+                      <span className="probe-pill probe-pill--ok">resumable</span>
+                    ) : null}
+                  </div>
+                )}
+                {probeError ? (
+                  <span className="probe-row__err">{probeError}</span>
+                ) : null}
+              </div>
+            </dd>
 
-        <div className="form-grid form-grid--3">
-          <Field label="Save as">
-            <input
-              className="input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="(auto from URL)"
-            />
-         </Field>
-          <Field label="Save to">
-            <input
-              className="input"
-              value={dir}
-              onChange={(e) => setDir(e.target.value)}
-              placeholder="Downloads folder"
-            />
-         </Field>
-          <Field label="Connections">
-            <input
-              type="number"
-              className="input"
-              min={1}
-              max={store.settings?.max_threads ?? 16}
-              value={connections}
-              onChange={(e) => setConnections(Math.max(1, Number(e.target.value)))}
-            />
-         </Field>
-          <Field label="Category">
-            <select
-              className="select"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            >
-              {allCategories.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.label || c.name}
-               </option>
-              ))}
-           </select>
-         </Field>
-          <Field label="Queue">
-            <select
-              className="select"
-              value={queue}
-              onChange={(e) => setQueue(e.target.value)}
-            >
-              {queues.map((q) => (
-                <option key={q} value={q}>
-                  {q}
-               </option>
-              ))}
-           </select>
-         </Field>
-          <Field label="Description">
-            <input
-              className="input"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="optional"
-            />
-         </Field>
-       </div>
+            <dt>Save as</dt>
+            <dd>
+              <input
+                className="input w-full"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="(auto from URL)"
+              />
+            </dd>
 
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={startNow}
-            onChange={(e) => setStartNow(e.target.checked)}
-          />
-          Start download immediately
-       </label>
-        <Field
-          label="Mirrors (one URL per line)"
-          hint="Alternate sources for the same file — tried in order if the main URL fails."
-        >
-          <textarea
-            className="input input--area"
-            rows={2}
-            placeholder="https://mirror.example.com/file.zip"
-            value={mirrors}
-            onChange={(e) => setMirrors(e.target.value)}
-          />
-       </Field>
+            <dt>Save to</dt>
+            <dd>
+              <input
+                className="input w-full"
+                value={dir}
+                onChange={(e) => setDir(e.target.value)}
+                placeholder="Downloads folder"
+              />
+            </dd>
+
+            <dt>Category</dt>
+            <dd>
+              <select
+                className="select w-full"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              >
+                {allCategories.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.label || c.name}
+                  </option>
+                ))}
+              </select>
+            </dd>
+          </div>
+        </fieldset>
+
+        {/* Download Options Section */}
+        <fieldset className="groupbox">
+          <legend>Download Options</legend>
+          <div className="form-grid-kv">
+            <dt>Queue</dt>
+            <dd>
+              <select
+                className="select w-full"
+                value={queue}
+                onChange={(e) => setQueue(e.target.value)}
+              >
+                {queues.map((q) => (
+                  <option key={q} value={q}>
+                    {q}
+                  </option>
+                ))}
+              </select>
+            </dd>
+
+            <dt>Connections</dt>
+            <dd>
+              <input
+                type="number"
+                className="input w-24"
+                min={1}
+                max={store.settings?.max_threads ?? 16}
+                value={connections}
+                onChange={(e) => setConnections(Math.max(1, Number(e.target.value)))}
+              />
+            </dd>
+
+            <dt>Description</dt>
+            <dd>
+              <input
+                className="input w-full"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="optional"
+              />
+            </dd>
+
+            <dt>Mirrors</dt>
+            <dd>
+              <textarea
+                className="input input--area w-full"
+                rows={2}
+                placeholder="https://mirror.example.com/file.zip (one per line)"
+                value={mirrors}
+                onChange={(e) => setMirrors(e.target.value)}
+              />
+            </dd>
+
+            <dt></dt>
+            <dd>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={startNow}
+                  onChange={(e) => setStartNow(e.target.checked)}
+                />
+                <span>Start download immediately</span>
+              </label>
+            </dd>
+          </div>
+        </fieldset>
+
         {err ? <div className="form-error">{err}</div> : null}
-     </div>
-   </Dialog>
+      </div>
+    </Dialog>
   );
 }

@@ -1,9 +1,18 @@
-// IDM-style menu bar with a small integrated search input on the
-// right. Every menu entry is wired to a real action — nothing here
-// is a placeholder. Disabled entries reflect actual capability.
-
-import React, { useEffect, useRef, useState } from "react";
+// IDM-style menu bar with classic desktop dropdowns and active-menu hover switching.
+import React, { useState, useEffect, useRef } from "react";
 import type { DownloadsStore } from "../store/useDownloads";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+type MenuKey = "tasks" | "file" | "downloads" | "view" | "help" | null;
+
+type MenuItem =
+  | {
+      label: string;
+      shortcut?: string;
+      onClick?: () => void;
+      disabled?: boolean;
+    }
+  | { sep: true };
 
 type Props = {
   store: DownloadsStore;
@@ -17,256 +26,304 @@ type Props = {
   onSettings: () => void;
   onHistory: () => void;
   onAbout: () => void;
+  onShortcuts?: () => void;
   onOpenProps: () => void;
   onToggleDetails: () => void;
   detailsOpen: boolean;
   onFocusSearch?: () => void;
 };
 
-type Item =
-  | { label: string; onClick?: () => void; shortcut?: string; disabled?: boolean }
-  | { sep: true };
-
-function Menu({ label, items }: { label: string; items: Item[] }) {
-  const [open, setOpen] = React.useState(false);
-  const ref = React.useRef<HTMLLIElement>(null);
-  React.useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-  return (
-    <li className="menubar__item" ref={ref}>
-      <button className="menubar__btn" onClick={() => setOpen((o) => !o)}>
-        {label}
-      </button>
-      {open && (
-        <div className="menu-dropdown">
-          {items.map((it, i) =>
-            "sep" in it ? (
-              <div className="menu-sep" key={i} />
-            ) : (
-              <button
-                key={i}
-                className="menu-row"
-                disabled={it.disabled}
-                onClick={() => {
-                  setOpen(false);
-                  it.onClick?.();
-                }}
-              >
-                <span className="menu-row__label">{it.label}</span>
-                {it.shortcut && <span className="menu-row__short">{it.shortcut}</span>}
-              </button>
-            )
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
 export function MenuBar(props: Props) {
   const { store } = props;
-  const sel = [...store.selected];
-  const single = sel.length === 1 ? sel[0] : null;
-  const hasSel = sel.length > 0;
-  const singleTask = single !== null
-    ? store.tasks.find((t) => t.id === single) ?? null
-    : null;
+  const [activeMenu, setActiveMenu] = useState<MenuKey>(null);
+  const barRef = useRef<HTMLDivElement>(null);
 
-  const pauseSel = () => sel.forEach((id) => store.pause(id));
-  const resumeSel = () => sel.forEach((id) => store.resume(id));
-  const cancelSel = () => sel.forEach((id) => store.cancel(id));
-  const removeSel = () => sel.forEach((id) => store.remove(id));
-  const redownSel = () => sel.forEach((id) => store.redownload(id));
-  const retrySel = () => sel.forEach((id) => {
-    const t = store.tasks.find((x) => x.id === id);
-    if (t && t.status === "failed") store.resume(id);
-  });
-  const forceStartSel = () => sel.forEach((id) => store.forceStart(id));
-  const openFileSel = () => {
-    if (singleTask) void store.openFile(singleTask);
-  };
-  const openFolderSel = () => {
-    if (singleTask) void store.openFolder(singleTask);
-  };
-  const copyUrl = async () => {
-    if (singleTask) {
-      try {
-        await navigator.clipboard.writeText(singleTask.url);
-      } catch {/* ignore */}
-    }
-  };
-  const copyPath = async () => {
-    if (singleTask) {
-      const p = (singleTask.save_dir || "") + (singleTask.save_dir && singleTask.filename ? "/" : "") + (singleTask.filename || "");
-      try {
-        await navigator.clipboard.writeText(p);
-      } catch {/* ignore */}
-    }
-  };
-  const moveToQueuePrompt = () => {
-    if (!singleTask) return;
-    const next = window.prompt("Move to queue (name):", singleTask.queue);
-    if (next && next.trim()) void store.moveToQueue(singleTask.id, next.trim());
-  };
-  const changeCategoryPrompt = () => {
-    if (!singleTask) return;
-    const next = window.prompt("Change category:", singleTask.category);
-    if (next && next.trim()) void store.setCategory(singleTask.id, next.trim());
-  };
-  const renameSel = () => {
-    if (!singleTask) return;
-    const next = window.prompt("Rename to:", singleTask.filename);
-    if (next && next.trim() && next !== singleTask.filename) {
-      void store.rename(singleTask.id, next.trim());
-    }
-  };
-  /** Remove the task AND the file on disk. The store only knows
-   *  remove(id); the file deletion needs a Tauri command. The
-   *  existing `deleteFile` API does exactly this. */
-  const removeWithFile = async () => {
-    if (!singleTask) return;
-    if (!window.confirm(`Delete ${singleTask.filename || "this file"} and the on-disk file?`)) return;
+  // Close when clicking outside or pressing Escape
+  useEffect(() => {
+    if (activeMenu === null) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (barRef.current && !barRef.current.contains(e.target as Node)) {
+        setActiveMenu(null);
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setActiveMenu(null);
+      }
+    };
+
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeMenu]);
+
+  const sel = Array.from(store.selected);
+  const hasSel = sel.length > 0;
+  const single = sel.length === 1 ? sel[0] : null;
+  const singleTask =
+    single !== null ? store.tasks.find((t) => t.id === single) ?? null : null;
+
+  const handleExit = async () => {
     try {
-      const api = await import("../lib/api");
-      await api.deleteFile(singleTask.id);
+      const win = getCurrentWindow();
+      await win.close();
     } catch {
-      await store.remove(singleTask.id);
+      window.close?.();
     }
   };
+
+  const completedCount = store.tasks.filter((t) => t.status === "completed").length;
+
+  const handleDeleteCompleted = () => {
+    const completedIds = store.tasks
+      .filter((t) => t.status === "completed")
+      .map((t) => t.id);
+    for (const id of completedIds) {
+      void store.remove(id);
+    }
+  };
+
+  const menuDefinitions: Record<
+    Exclude<MenuKey, null>,
+    { label: string; items: MenuItem[] }
+  > = {
+    tasks: {
+      label: "Tasks",
+      items: [
+        {
+          label: "Add new download...",
+          shortcut: "Ctrl+N",
+          onClick: props.onAdd,
+        },
+        {
+          label: "Batch Download...",
+          onClick: props.onBatch,
+        },
+        {
+          label: "Site Grabber...",
+          onClick: props.onGrabber,
+        },
+        { sep: true },
+        {
+          label: "Exit",
+          onClick: handleExit,
+        },
+      ],
+    },
+    file: {
+      label: "File",
+      items: [
+        {
+          label: "Stop all downloads",
+          onClick: () => store.stopAll(),
+        },
+        {
+          label: "Delete completed",
+          onClick: handleDeleteCompleted,
+          disabled: completedCount === 0,
+        },
+        { sep: true },
+        {
+          label: "Stop",
+          onClick: () => sel.forEach((id) => store.cancel(id)),
+          disabled: !hasSel,
+        },
+        {
+          label: "Delete",
+          shortcut: "Del",
+          onClick: () => sel.forEach((id) => store.remove(id)),
+          disabled: !hasSel,
+        },
+        {
+          label: "Delete File from Disk",
+          onClick: async () => {
+            if (!singleTask) return;
+            if (
+              window.confirm(
+                `Delete "${singleTask.filename || "file"}" and remove from disk?`
+              )
+            ) {
+              void store.removeWithFile(singleTask.id);
+            }
+          },
+          disabled: !singleTask,
+        },
+        { sep: true },
+        {
+          label: "Properties...",
+          shortcut: "Ctrl+P",
+          onClick: props.onOpenProps,
+          disabled: !hasSel,
+        },
+      ],
+    },
+    downloads: {
+      label: "Downloads",
+      items: [
+        {
+          label: "Resume",
+          shortcut: "Space",
+          onClick: () => sel.forEach((id) => store.resume(id)),
+          disabled: !hasSel,
+        },
+        {
+          label: "Pause",
+          onClick: () => sel.forEach((id) => store.pause(id)),
+          disabled: !hasSel,
+        },
+        {
+          label: "Delete",
+          shortcut: "Del",
+          onClick: () => sel.forEach((id) => store.remove(id)),
+          disabled: !hasSel,
+        },
+        {
+          label: "Redownload",
+          onClick: () => sel.forEach((id) => store.redownload(id)),
+          disabled: !hasSel,
+        },
+        { sep: true },
+        {
+          label: "Options",
+          onClick: props.onSettings,
+        },
+      ],
+    },
+    view: {
+      label: "View",
+      items: [
+        {
+          label: props.detailsOpen
+            ? "Hide Details Panel"
+            : "Show Details Panel",
+          onClick: props.onToggleDetails,
+        },
+        { sep: true },
+        {
+          label: "Sort by Name",
+          onClick: () => store.setSort({ field: "name", dir: "asc" }),
+        },
+        {
+          label: "Sort by Size",
+          onClick: () => store.setSort({ field: "size", dir: "desc" }),
+        },
+        {
+          label: "Sort by Date",
+          onClick: () => store.setSort({ field: "added_at", dir: "desc" }),
+        },
+      ],
+    },
+    help: {
+      label: "Help",
+      items: [
+        {
+          label: "Keyboard Shortcuts",
+          onClick: () => {
+            if (props.onShortcuts) {
+              props.onShortcuts();
+            }
+          },
+        },
+        { sep: true },
+        {
+          label: "About DownPilot",
+          onClick: props.onAbout,
+        },
+      ],
+    },
+  };
+
+  const menuKeys: Array<Exclude<MenuKey, null>> = [
+    "tasks",
+    "file",
+    "downloads",
+    "view",
+    "help",
+  ];
 
   return (
-    <div className="menubar">
-      <div className="menubar__brand">DownPilot</div>
-      <ul className="menubar__list">
-        <Menu
-          label="File"
-          items={[
-            { label: "New Download…", shortcut: "Ctrl+N", onClick: props.onAdd },
-            { label: "Add Batch Download…", onClick: props.onBatch },
-            { label: "Import Downloads…", onClick: () => importExport("import") },
-            { label: "Export Downloads…", onClick: () => importExport("export") },
-            { sep: true },
-            { label: "View History", onClick: props.onHistory },
-            { sep: true },
-            { label: "Close", onClick: () => window.close?.() },
-          ]}
-        />
-        <Menu
-          label="Downloads"
-          items={[
-            { label: "Resume", shortcut: "Space", onClick: resumeSel, disabled: !hasSel },
-            { label: "Pause", onClick: pauseSel, disabled: !hasSel },
-            { label: "Stop", onClick: cancelSel, disabled: !hasSel },
-            { label: "Force Start", onClick: forceStartSel, disabled: !hasSel },
-            { label: "Retry", onClick: retrySel, disabled: !sel.some((id) => store.tasks.find((t) => t.id === id)?.status === "failed") },
-            { label: "Redownload", onClick: redownSel, disabled: !hasSel },
-            { sep: true },
-            { label: "Open File", onClick: openFileSel, disabled: !(singleTask && singleTask.status === "completed") },
-            { label: "Open Folder", onClick: openFolderSel, disabled: !singleTask },
-            { sep: true },
-            { label: "Copy URL", onClick: copyUrl, disabled: !singleTask },
-            { label: "Copy Path", onClick: copyPath, disabled: !singleTask },
-            { sep: true },
-            { label: "Rename", shortcut: "F2", onClick: renameSel, disabled: !single },
-            { label: "Move to Queue…", onClick: moveToQueuePrompt, disabled: !singleTask },
-            { label: "Change Category…", onClick: changeCategoryPrompt, disabled: !singleTask },
-            { label: "Properties", shortcut: "Ctrl+P", onClick: props.onOpenProps, disabled: !single },
-            { sep: true },
-            { label: "Delete", shortcut: "Del", onClick: removeSel, disabled: !hasSel },
-            { label: "Delete + File", onClick: removeWithFile, disabled: !singleTask },
-          ]}
-        />
-        <Menu
-          label="View"
-          items={[
-            { label: "All Downloads", onClick: () => store.setSidebarKey({ kind: "all" }) },
-            { label: "Unfinished", onClick: () => store.setSidebarKey({ kind: "status", value: "unfinished" }) },
-            { label: "Finished", onClick: () => store.setSidebarKey({ kind: "status", value: "finished" }) },
-            { label: "Paused", onClick: () => store.setSidebarKey({ kind: "status", value: "paused" }) },
-            { label: "Errors", onClick: () => store.setSidebarKey({ kind: "status", value: "failed" }) },
-            { sep: true },
-            { label: props.detailsOpen ? "Hide Details" : "Show Details", onClick: props.onToggleDetails },
-          ]}
-        />
-        <Menu
-          label="Tasks"
-          items={[
-            { label: "Add URL…", shortcut: "Ctrl+N", onClick: props.onAdd },
-            { label: "Batch Download…", onClick: props.onBatch },
-            { label: "Grabber…", onClick: props.onGrabber },
-            { label: "Site Manager…", onClick: props.onSites },
-            { label: "Categories…", onClick: props.onCategories },
-            { label: "Scheduler…", onClick: props.onScheduler },
-            { label: "Queue Manager…", onClick: props.onQueues },
-            { sep: true },
-            { label: "Start All", onClick: () => store.resumeAll() },
-            { label: "Pause All", onClick: () => store.pauseAll() },
-            { label: "Stop All", onClick: () => store.stopAll() },
-            { label: "Retry All Failed", onClick: () => store.retryAll() },
-            { sep: true },
-            { label: "Clear Finished", onClick: () => store.clearFinished() },
-          ]}
-        />
-        <Menu
-          label="Tools"
-          items={[
-            { label: "Options…", shortcut: "Ctrl+,", onClick: props.onSettings },
-            { label: "Browser Integration…", onClick: props.onSettings },
-            { sep: true },
-            { label: "About DownPilot", onClick: props.onAbout },
-          ]}
-        />
-        <Menu
-          label="Help"
-          items={[
-            { label: "Keyboard Shortcuts", onClick: () => {
-              alert(
-                "DownPilot keyboard shortcuts\n\n" +
-                "  Ctrl+N          New download\n" +
-                "  Ctrl+F          Focus search\n" +
-                "  Ctrl+A          Select all\n" +
-                "  Ctrl+P          Properties\n" +
-                "  Ctrl+,          Options\n" +
-                "  Enter           Open / properties\n" +
-                "  Del             Remove selected\n" +
-                "  F2              Rename\n" +
-                "  Space           Pause/Resume\n" +
-                "  Double-click    Open file if done, else Properties"
-              );
-            } },
-            { label: "About DownPilot", onClick: props.onAbout },
-          ]}
-        />
+    <div
+      ref={barRef}
+      data-tauri-drag-region="false"
+      className="menubar menu-bar flex h-[26px] shrink-0 items-center border-b border-[var(--line)] bg-[var(--bg-toolbar)] px-1.5 select-none text-[var(--text)] relative z-50"
+      style={{ WebkitAppRegion: "no-drag" } as unknown as React.CSSProperties}
+    >
+      <ul className="flex items-center list-none m-0 p-0 gap-0 text-[12px]">
+        {menuKeys.map((key) => {
+          const menu = menuDefinitions[key];
+          const isOpen = activeMenu === key;
+          return (
+            <li key={key} className="relative menu-item">
+              <button
+                type="button"
+                className="menubar__btn"
+                onClick={() => setActiveMenu(isOpen ? null : key)}
+                onMouseEnter={() => {
+                  if (activeMenu !== null) {
+                    setActiveMenu(key);
+                  }
+                }}
+                style={
+                  {
+                    padding: "2px 8px",
+                    fontSize: "12px",
+                    color: "var(--text)",
+                    background: isOpen ? "var(--btn-hover)" : "transparent",
+                    borderColor: isOpen ? "var(--line)" : "transparent",
+                    WebkitAppRegion: "no-drag",
+                  } as unknown as React.CSSProperties
+                }
+              >
+                {menu.label}
+              </button>
+
+              {isOpen && (
+                <div
+                  className="menu-dropdown"
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--line)",
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+                    padding: "3px 0",
+                    minWidth: "160px",
+                    zIndex: 1000,
+                    fontSize: "12px",
+                  }}
+                >
+                  {menu.items.map((item, idx) =>
+                    "sep" in item ? (
+                      <div key={idx} className="menu-sep" style={{ borderTop: "1px solid var(--line)", margin: "3px 0" }} />
+                    ) : (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="menu-row text-[var(--text)] hover:bg-[var(--row-hover)]"
+                        disabled={item.disabled}
+                        onClick={() => {
+                          setActiveMenu(null);
+                          item.onClick?.();
+                        }}
+                      >
+                        <span>{item.label}</span>
+                        {item.shortcut && (
+                          <span className="menu-row__short text-[var(--text-faint)]">
+                            {item.shortcut}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
-}
-
-async function importExport(kind: "import" | "export") {
-  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-    try {
-      const dialog = await import("@tauri-apps/plugin-dialog");
-      if (kind === "export") {
-        const p = await dialog.save({
-          defaultPath: "downpilot-exports.json",
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (p) await import("../lib/api").then((a) => a.exportDownloads(p));
-      } else {
-        const f = await dialog.open({
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (typeof f === "string")
-          await import("../lib/api").then((a) => a.importDownloads(f, true));
-      }
-    } catch {
-      /* ignore */
-    }
-  }
 }

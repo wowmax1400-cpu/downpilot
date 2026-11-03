@@ -61,6 +61,14 @@ export async function cancelDownload(id: number): Promise<void> {
 export async function removeDownload(id: number): Promise<void> {
   return call("remove_download", { id }, () => undefined);
 }
+export async function updateDownloadUrl(id: number, newUrl: string): Promise<void> {
+  return invoke("update_download_url", { id, newUrl });
+}
+
+export async function updateDownloadCookies(id: number, cookies: string): Promise<void> {
+  return invoke("update_download_cookies", { id, cookies });
+}
+
 export async function redownload(id: number): Promise<void> {
   return call("redownload", { id }, () => undefined);
 }

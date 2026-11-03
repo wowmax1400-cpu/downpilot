@@ -22,6 +22,9 @@
 //    `cookies` column of `downloads`; it is never echoed back through
 //    the NMH protocol.
 
+// Track worker startup timestamp to ignore restored/stale historical downloads.
+const WORKER_START_TIME = Date.now();
+
 const NMH_NAME = "com.downpilot.nmh";
 
 const config = {
@@ -369,10 +372,26 @@ function wasCaptured(url) {
   return true;
 }
 
+// Helper to check whether download item is an old restored download from prior sessions.
+function isStaleRestoredDownload(item) {
+  if (!item) return true;
+  // If Chrome reports state other than "in_progress", it is completed or interrupted history.
+  if (item.state && item.state !== "in_progress") return true;
+  // If startTime exists and predates this background worker initialization, ignore.
+  if (item.startTime) {
+    const started = new Date(item.startTime).getTime();
+    if (!isNaN(started) && started < WORKER_START_TIME - 3000) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---- Chrome download takeover ---------------------------------------------
 chrome.downloads.onCreated.addListener((item) => {
   if (!item || !item.url) return;
   if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
+  if (isStaleRestoredDownload(item)) return;
   // NB: blob:/data: downloads are in-memory objects the backend cannot
   // re-fetch (no URL to hit), so they are left to Chrome. Streaming-site
   // capture (MSE/HLS) happens via the content-script overlay instead.
@@ -389,6 +408,7 @@ chrome.downloads.onCreated.addListener((item) => {
 });
 
 function handleCreated(item) {
+  if (isStaleRestoredDownload(item)) return;
   if (wasCaptured(item.url)) return;
 
   decide(item.url).then((verdict) => {
@@ -680,11 +700,33 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
-  // taskAction: popup sends {action: "taskAction", type: "pause|resume|cancel", id}
+  if (msg.action === "getActiveDownloads") {
+    sendMessage({ type: "GET_ACTIVE_DOWNLOADS" })
+      .then((resp) => sendResponse({ ok: true, tasks: resp.data || [] }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.action === "clearTerminal") {
+    sendMessage({ type: "CLEAR_TERMINAL" })
+      .then((resp) => sendResponse({ ok: true, data: resp.data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.action === "deleteDownload") {
+    if (msg.id == null) {
+      sendResponse({ ok: false, error: "missing id" });
+      return;
+    }
+    sendMessage({ type: "DELETE_DOWNLOAD", id: msg.id })
+      .then((resp) => sendResponse({ ok: true, data: resp.data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  // taskAction: popup sends {action: "taskAction", type: "pause|resume|cancel|delete", id}
   // (the `action` field is the RPC tag). The NMH `type` is the verb.
   if (msg.action === "taskAction") {
     const t = msg.type || (msg.action !== "taskAction" ? msg.action : null);
-    const valid = new Set(["pause", "resume", "cancel", "start"]);
+    const valid = new Set(["pause", "resume", "cancel", "start", "delete", "DELETE_DOWNLOAD"]);
     if (!valid.has(t) || msg.id == null) {
       sendResponse({ ok: false, error: "missing type or id" });
       return;

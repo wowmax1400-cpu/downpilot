@@ -13,7 +13,7 @@
 
 import { useMemo, useState } from "react";
 import type { DownloadTask, GroupBy, Sort, SortField } from "../types";
-import { fileIconFor } from "./icons";
+import { fileIconFor, IdmQueueClock } from "./icons";
 import {
   formatBytes,
   formatSpeed,
@@ -178,9 +178,16 @@ export function DownloadTable({
 }
 
 function gridTemplate(widths: Record<ColumnId, number>, visible: ColumnId[]) {
-  // Keep selection independent from the first data column. The fixed track
-  // prevents the checkbox from sharing the filename/icon cell.
-  return ["30px", ...visible.map((id) => `minmax(0, ${widths[id] ?? 100}px)`)].join(" ");
+  // Pure row selection (no checkbox column)
+  // Keep 'name' (File Name) fluid (minmax(150px, 1fr)) while keeping other columns fixed
+  return visible
+    .map((id) => {
+      if (id === "name") {
+        return "minmax(150px, 1fr)";
+      }
+      return `${widths[id] ?? 100}px`;
+    })
+    .join(" ");
 }
 
 function Group({
@@ -218,9 +225,10 @@ function Group({
           </span>
         </div>
       )}
-      {items.map((t) => (
+      {items.map((t, idx) => (
         <Row
           key={t.id}
+          index={idx}
           t={t}
           visible={visible}
           widths={widths}
@@ -234,6 +242,69 @@ function Group({
         />
       ))}
     </>
+  );
+}
+
+function HeaderCell({
+  id,
+  col,
+  sf,
+  isLast,
+  isQ,
+  colClass,
+  width,
+  arrow,
+  flip,
+  onResize,
+}: {
+  id: ColumnId;
+  col: (typeof COLUMNS)[number];
+  sf?: SortField;
+  isLast: boolean;
+  isQ: boolean;
+  colClass: string;
+  width: number;
+  arrow: string;
+  flip: (f: SortField) => void;
+  onResize: (dx: number) => void;
+}) {
+  const [pressed, setPressed] = useState(false);
+  const cellAlign = isQ ? "justify-center text-center" : col.right ? "justify-end text-right" : "justify-start text-left";
+
+  return (
+    <div
+      className={`column-header relative flex items-center ${isQ ? "justify-center px-0" : col.right ? "justify-end px-2" : "justify-start px-2"} ${colClass} last:pr-0 h-[24px] leading-[24px] overflow-hidden whitespace-nowrap select-none`}
+      style={{
+        background: "#FAFAFA",
+        borderBottom: "1px solid #E0E0E0",
+        borderRight: isLast ? "none" : "1px solid #EAEAEA",
+        borderTop: "none",
+        borderLeft: "none",
+        padding: isQ ? "0" : "0 8px",
+        fontWeight: "500",
+        fontSize: "12px",
+        color: "#444444",
+        whiteSpace: "nowrap",
+        textAlign: isQ ? "center" : col.right ? "right" : "left",
+      }}
+    >
+      <div
+        className={`flex select-none items-center text-[12px] font-medium text-[#444] ${cellAlign} ${
+          sf ? "cursor-pointer" : ""
+        } w-full truncate overflow-hidden whitespace-nowrap ${col.right ? "pr-1" : ""}`}
+        onClick={() => sf && flip(sf)}
+        title={col.label}
+      >
+        <span>{col.label}</span>
+        {sf && <span className="ml-1 text-[10px] text-gray-500">{arrow}</span>}
+      </div>
+      {!isLast && (
+        <ResizeHandle
+          onResize={onResize}
+          minWidth={col.minWidth}
+        />
+      )}
+    </div>
   );
 }
 
@@ -288,102 +359,36 @@ function Header({
   const arrow = (f: SortField) =>
     sort.field === f ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
 
-  const cell = (align: "left" | "right") =>
-    `flex select-none items-center text-[10.5px] font-semibold uppercase tracking-wider text-txt-dim transition-colors hover:text-txt ${
-      align === "right" ? "justify-end" : "justify-start"
-    }`;
-
   return (
     <div
-      className="grid shrink-0 items-center gap-x-0 border-b border-[var(--line)] bg-[var(--table-bg)] px-0 py-[2px]"
+      className="grid shrink-0 items-center gap-x-0 bg-[var(--table-header-bg)] border-b border-[var(--line)] px-0 py-0 h-[26px] select-none text-[var(--table-header-text)] overflow-hidden whitespace-nowrap"
       style={{ gridTemplateColumns: gridTemplate(widths, visible) }}
       role="row"
     >
-      <div className="flex w-[30px] items-center justify-center border-r border-[var(--line-soft)]">
-        <input
-          type="checkbox"
-          aria-label="Select all visible downloads"
-          checked={allSelected}
-          ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
-          onChange={onToggleAll}
-          onClick={(e) => e.stopPropagation()}
-          className="h-3.5 w-3.5 accent-[var(--accent)]"
-        />
-      </div>
       {visible.map((id, i) => {
         const col = COLUMNS.find((c) => c.id === id)!;
         const sf = sortable[id];
         const isLast = i === visible.length - 1;
+        const isQ = id === "queue";
+        const colClass =
+          id === "speed" ? "col-transfer-rate" :
+          id === "time_left" ? "col-time-left" :
+          id === "status" ? "col-status" :
+          isQ ? "col-q" : "";
         return (
-          <div key={id} className="relative flex items-center justify-end pr-2 last:pr-0 border-r border-[var(--line-soft)]">
-            <div
-              className={`${cell(col.right ? "right" : "left")} ${
-                sf ? "cursor-pointer" : ""
-              } w-full`}
-              onClick={() => sf && flip(sf)}
-            >
-              {col.label}
-              {sf && arrow(sf)}
-            </div>
-            {!isLast && (
-              <ResizeHandle
-                onResize={(dx) => onResize(id, widths[id] + dx)}
-                minWidth={col.minWidth}
-              />
-            )}
-            {/* HTML5 drag-to-reorder. The header cell is draggable; the
-                next cell (or the wrapper around it) is the drop target.
-                onDrop calls onMove(src, thisId) which inserts src just
-                before thisId. */}
-            <div
-              draggable
-              onDragStart={(e) => {
-                if (e.dataTransfer) {
-                  e.dataTransfer.setData("text/plain", id);
-                  e.dataTransfer.effectAllowed = "move";
-                }
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const src = e.dataTransfer?.getData("text/plain") ?? "";
-                if (src && src !== id) onMove(src as ColumnId, id);
-              }}
-              className="absolute inset-y-0 right-3 w-2 cursor-grab active:cursor-grabbing"
-              title="Drag to reorder"
-              aria-label="Reorder column"
-            />
-            {/* Right-click on the LAST cell opens the columns menu (this
-                is the only place the menu trigger lives — simpler than
-                adding a separate cog icon). */}
-            {isLast && (
-              <button
-                type="button"
-                aria-label="Columns"
-                title="Choose columns…"
-                className="absolute inset-y-0 right-0 hidden w-6 items-center justify-center text-slate-500 hover:text-slate-200 group-hover:flex"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  onOpenColumnsMenu(r.right, r.bottom);
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onOpenColumnsMenu(e.clientX, e.clientY);
-                }}
-              >
-                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor">
-                  <circle cx="3" cy="8" r="1.4" />
-                  <circle cx="8" cy="8" r="1.4" />
-                  <circle cx="13" cy="8" r="1.4" />
-                </svg>
-              </button>
-            )}
-          </div>
+          <HeaderCell
+            key={id}
+            id={id}
+            col={col}
+            sf={sf}
+            isLast={isLast}
+            isQ={isQ}
+            colClass={colClass}
+            width={widths[id]}
+            arrow={sf ? arrow(sf) : ""}
+            flip={flip}
+            onResize={(dx) => onResize(id, widths[id] + dx)}
+          />
         );
       })}
     </div>
@@ -429,6 +434,7 @@ function ResizeHandle({
 
 function Row({
   t,
+  index = 0,
   visible,
   widths,
   selected,
@@ -440,6 +446,7 @@ function Row({
   speedHistory,
 }: {
   t: DownloadTask;
+  index?: number;
   visible: ColumnId[];
   widths: Record<ColumnId, number>;
   selected: boolean;
@@ -460,16 +467,21 @@ function Row({
   const done = t.downloaded || 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
-  const numCell = "text-right font-mono text-xs tabular-nums text-txt-dim";
-  const dim = "text-xs text-txt-dim";
+  const numCell = "text-right font-mono text-[11px] tabular-nums text-[var(--text-dim)]";
+  const dim = "text-[11px] text-[var(--text-dim)]";
+
+  const rowBg = index % 2 === 1 ? "bg-[var(--row-alt)]" : "bg-[var(--table-bg)]";
 
   return (
     <div
       className={
-        "group relative grid cursor-default items-center gap-x-0 border-b border-[var(--line-soft)] bg-[var(--surface)] px-1 py-[7px] text-xs transition-colors hover:bg-[var(--surface-2)] " +
-        (selected ? "!bg-[rgba(34,211,238,0.10)]" : "")
+        `group relative grid cursor-default items-center gap-x-0 border-b border-[var(--line-soft)] ${rowBg} px-0 py-0 h-[26px] text-[12px] select-none ` +
+        (selected ? "!bg-[var(--row-selected)] !border-y !border-[var(--row-selected-border)] text-[var(--text)]" : "text-[var(--text)] hover:bg-[var(--row-hover)]")
       }
-      style={{ gridTemplateColumns: gridTemplate(widths, visible) }}
+      style={{
+        gridTemplateColumns: gridTemplate(widths, visible),
+        fontFamily: "'Segoe UI', -apple-system, 'Liberation Sans', sans-serif",
+      }}
       role="row"
       data-download-id={t.id}
       aria-selected={selected}
@@ -497,29 +509,19 @@ function Row({
       }}
       onDoubleClick={() => onRowActivate?.(t.id)}
     >
-      <div className="flex w-[30px] items-center justify-center border-r border-[var(--line-soft)]" role="gridcell">
-      <button
-        type="button"
-        aria-label={selected ? `Deselect ${t.filename}` : `Select ${t.filename}`}
-        aria-pressed={selected}
-        className={`h-4 w-4 rounded-[4px] border text-[9px] leading-none transition-colors ${
-          selected
-            ? "border-cyan-400 bg-cyan-500 text-white"
-            : "border-slate-600 bg-slate-900/80 text-transparent hover:border-cyan-400"
-        }`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(t.id, e);
-        }}
-      >
-        {selected ? "✓" : ""}
-      </button>
-      </div>
       {visible.map((id) => {
         const col = COLUMNS.find((c) => c.id === id)!;
-        const align = "pr-2";
+        const isQ = id === "queue";
+        const colClass =
+          id === "speed" ? "col-transfer-rate" :
+          id === "time_left" ? "col-time-left" :
+          id === "status" ? "col-status" :
+          isQ ? "col-q" : "";
         return (
-          <div key={id} className={`${align} overflow-hidden border-r border-[var(--line-soft)] last:border-r-0`}>
+          <div
+            key={id}
+            className={`overflow-hidden border-r border-[var(--line-soft)] last:border-r-0 h-full flex items-center ${isQ ? "justify-center px-0" : col.right ? "justify-end px-2" : "justify-start px-2"} ${colClass} whitespace-nowrap`}
+          >
             {renderCell(id, {
               t,
               Icon,
@@ -566,27 +568,24 @@ function renderCell(
           >
             <Icon size={12} />
           </span>
-          <span className="truncate text-[12px] text-txt">
+          <span className="truncate text-[12px] font-medium text-sky-400 hover:underline cursor-pointer">
             {t.filename || t.url || "—"}
           </span>
         </div>
       );
     case "size":
-      return <div className={numCell}>{formatBytes(total)}</div>;
+      return <div className={`${numCell} truncate overflow-hidden whitespace-nowrap`}>{formatBytes(total)}</div>;
     case "status": {
       // Spec 4: when the transfer has all bytes (100%), IDM shows the
       // row as Complete — never as the transient "Paused" state the
       // engine parks post-completion. Everything at 100% reads green.
       const isDoneBytes = total > 0 && done >= total;
       const statusForUi = isDoneBytes ? "completed" : t.status;
-      // Spec 3: Status combines progress & state — "Downloading 45%",
-      // "Paused 100%", "Complete", "Error". Completion wins over any
-      // transient parked state (spec 4).
       let label: string;
       let title: string | undefined;
       if (statusForUi === "failed") {
-        label = statusLabel(statusForUi);
-        if (t.error_code) label = `${statusLabel(statusForUi)} / HTTP ${t.error_code}`;
+        label = statusLabel(statusForUi, t.error);
+        if (t.error_code) label = `${statusLabel(statusForUi, t.error)} / HTTP ${t.error_code}`;
         if (t.error) title = t.error;
       } else if (statusForUi === "completed" || statusForUi === "cancelled") {
         label = statusLabel(statusForUi);
@@ -600,16 +599,42 @@ function renderCell(
       }
       return (
         <div
-          className="flex"
+          className="flex w-full items-center gap-1.5"
           title={title}
         >
-          <span className={`inline-flex items-center gap-1 text-[11.5px] leading-none ${statusBadge(statusForUi)}`}>
-            <span aria-hidden="true" className="w-[10px] text-center">{statusGlyph(statusForUi)}</span>
-            <span>{label}</span>
-          </span>
+          {statusForUi === "downloading" ? (
+            <div className="flex w-full items-center gap-1.5">
+              <div className="h-[12px] min-w-[36px] flex-1 overflow-hidden rounded-[3px] border border-[#1e293b] bg-[#111827] p-[1px]">
+                <div
+                  className="h-full rounded-[2px] bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_8px_rgba(6,182,212,0.5)]"
+                  style={{ width: `${Math.max(2, Math.min(100, pct))}%` }}
+                />
+              </div>
+              <span className="font-mono text-[10.5px] tabular-nums font-semibold text-cyan-400">
+                {pct}%
+              </span>
+            </div>
+          ) : statusForUi === "completed" ? (
+            <span className="pill-badge pill-badge--complete">
+              {label}
+            </span>
+          ) : statusForUi === "failed" ? (
+            <span className="pill-badge pill-badge--error flex items-center gap-1">
+              <span className="font-bold text-[11px]">⚠</span>
+              <span>{label}</span>
+            </span>
+          ) : statusForUi === "paused" || statusForUi === "stopped" ? (
+            <span className="pill-badge pill-badge--warning">
+              {label}
+            </span>
+          ) : (
+            <span className={`inline-flex items-center text-[11px] leading-none ${statusBadge(statusForUi)}`}>
+              <span>{label}</span>
+            </span>
+          )}
           {t.force_started && (
             <span
-              className="ml-1 text-[9.5px] leading-none font-semibold text-amber-300"
+              className="ml-0.5 text-[9.5px] leading-none font-semibold text-amber-600"
               title="Force-started: this task bypassed the normal queue ordering"
             >
               FS
@@ -617,7 +642,7 @@ function renderCell(
           )}
           {t.mirror_index > 0 && (
             <span
-              className="ml-1 text-[9.5px] leading-none font-semibold text-cyan-300"
+              className="ml-0.5 text-[9.5px] leading-none font-semibold text-blue-600"
               title={`Mirror #${t.mirror_index}: pulling from ${t.mirrors[t.mirror_index - 1] ?? ""}`}
             >
               M{t.mirror_index}
@@ -628,7 +653,7 @@ function renderCell(
     }
     case "time_left":
       return (
-        <div className={numCell}>
+        <div className={`${numCell} truncate overflow-hidden whitespace-nowrap`}>
           {(() => {
             const m = deriveTaskMetrics(t, speedHistory?.(t.id) ?? []);
             if (t.status !== "downloading" || m.etaSecs == null) return "—";
@@ -643,7 +668,7 @@ function renderCell(
       );
     case "speed":
       return (
-        <div className={numCell}>
+        <div className={`${numCell} truncate overflow-hidden whitespace-nowrap`}>
           {(() => {
             const m = deriveTaskMetrics(t, speedHistory?.(t.id) ?? []);
             if (t.status === "downloading")
@@ -683,20 +708,23 @@ function renderCell(
       return <div className={numCell}>{t.threads || 1}</div>;
     case "category":
       return <div className={dim + " truncate"}>{t.category || "other"}</div>;
-    case "queue":
-      return <div className={dim + " truncate"}>{t.queue === "general" ? "Main Queue" : t.queue || "general"}</div>;
+    case "queue": {
+      // In IDM: yellow/blue clock icon if in queue, blank when inactive/completed
+      const inQueue = t.status === "queued" || t.status === "scheduled" || (t.queue && t.status === "downloading");
+      return (
+        <div className="flex w-full items-center justify-center">
+          {inQueue ? <IdmQueueClock size={14} /> : null}
+        </div>
+      );
+    }
     case "last_try": {
-      // IDM's "Last Try": when finished, show completed date; otherwise
-      // show when it was added (the most recent engine touch lives in
-      // last_resumed_at / started_at).
       const ts = t.status === "completed" && t.completed_at
         ? t.completed_at
         : t.last_resumed_at ?? t.started_at ?? t.created_at ?? t.updated_at;
-      const label =
-        ts ? formatDateTimeShort(ts) : "—";
+      const label = ts ? formatDateTimeShort(ts) : "—";
       return (
         <div
-          className={`${numCell} truncate`}
+          className={`${numCell} truncate overflow-hidden whitespace-nowrap pl-1`}
           title={ts ? `Last try: ${formatDateTime(ts)}` : "No last try recorded"}
         >
           {label}

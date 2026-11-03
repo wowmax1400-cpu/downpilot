@@ -153,6 +153,8 @@ pub enum CompletionAction {
     Shutdown,
     Suspend,
     Hibernate,
+    DisconnectNet,
+    DisconnectVpn,
 }
 
 impl CompletionAction {
@@ -168,6 +170,8 @@ impl CompletionAction {
             CompletionAction::Shutdown => "shutdown",
             CompletionAction::Suspend => "suspend",
             CompletionAction::Hibernate => "hibernate",
+            CompletionAction::DisconnectNet => "disconnect_net",
+            CompletionAction::DisconnectVpn => "disconnect_vpn",
         }
     }
 }
@@ -813,6 +817,15 @@ pub struct GrabRules {
     pub min_size: i64,
     /// Drop links larger than this many bytes. `0` = no maximum.
     pub max_size: i64,
+    /// Maximum recursive crawl depth (0 = current page only, 1 = 1 hop, etc.).
+    #[serde(default)]
+    pub max_depth: usize,
+    /// Maximum additional pages to crawl when depth > 0.
+    #[serde(default)]
+    pub max_pages: usize,
+    /// Stay within the starting hostname.
+    #[serde(default = "default_true")]
+    pub same_domain_only: bool,
 }
 
 impl GrabRules {
@@ -879,6 +892,9 @@ impl GrabRules {
             exclude_domains: vec![],
             min_size: 0,
             max_size: 0,
+            max_depth: 0,
+            max_pages: 5,
+            same_domain_only: true,
         }
     }
 }

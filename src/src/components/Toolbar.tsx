@@ -1,72 +1,22 @@
 // IDM-style toolbar: large icons stacked ABOVE their labels, grouped
-// and separated by vertical dividers (spec):
-//   [Add URL] | [Resume, Pause, Stop All] | [Delete] |
-//   [Options, Scheduler, Site Grabber]  (spec 1)
-// The right side keeps the bandwidth selector (Unlimited / 1 / 5 /
-// 10 MB/s / Custom) — IDM's own cap dropdown lives in the same place.
+// and separated by vertical dividers.
 
 import {
-  IconAdd,
-  IconStart,
-  IconPause,
-  IconDelete,
-  IconOptions,
-  IconScheduler,
-  IconGrabber,
-  IconStop,
+  IdmIconAdd,
+  IdmIconResume,
+  IdmIconStop,
+  IdmIconStopAll,
+  IdmIconDelete,
+  IdmIconDeleteCompleted,
+  IdmIconOptions,
+  IdmIconScheduler,
+  IdmIconStartQueue,
+  IdmIconStopQueue,
+  IdmIconGrabber,
+  IdmIconTellAFriend,
 } from "./icons";
 import type { DownloadsStore } from "../store/useDownloads";
-import type { AppSettings } from "../types";
-import { useEffect, useRef, useState } from "react";
-
-/** Toolbar search — lives on the right of the utility strip (pro app
- *  convention: actions left, filter right). Owns its input state and
- *  mirrors store.search; App still dispatches
- *  `downpilot:focus-search` for Ctrl+F. */
-function ToolbarSearch({ store }: { store: DownloadsStore }) {
-  const [value, setValue] = useState(store.search);
-  const ref = useRef<HTMLInputElement | null>(null);
-  useEffect(() => setValue(store.search), [store.search]);
-  useEffect(() => {
-    const onFocus = () => ref.current?.focus();
-    document.addEventListener("downpilot:focus-search", onFocus);
-    return () => document.removeEventListener("downpilot:focus-search", onFocus);
-  }, []);
-  return (
-    <div className="flex h-[22px] w-[188px] max-w-[34vw] items-center gap-1.5 border border-[var(--line)] bg-[var(--surface-2)] pl-1.5 pr-1 focus-within:border-[var(--accent)]">
-      <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-txt-faint" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <circle cx="7" cy="7" r="4.5" />
-        <path d="M10.5 10.5l3 3" />
-      </svg>
-      <input
-        ref={ref}
-        type="text"
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          store.setSearch(e.target.value);
-        }}
-        placeholder="Search downloads…"
-        title="Search supports: bare text, since:YYYY-MM-DD, until:YYYY-MM-DD, today, week"
-        className="h-full min-w-0 flex-1 border-0 bg-transparent text-[11.5px] text-[var(--text)] outline-none placeholder:text-txt-faint"
-      />
-      {value && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          className="grid h-[15px] w-[15px] shrink-0 place-items-center border-0 bg-transparent p-0 text-[13px] leading-none text-txt-faint hover:text-[var(--text)]"
-          onClick={() => {
-            setValue("");
-            store.setSearch("");
-            ref.current?.focus();
-          }}
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
+import { useState } from "react";
 
 export type ToolbarAction =
   | "add"
@@ -75,8 +25,12 @@ export type ToolbarAction =
   | "pause"
   | "stopAll"
   | "delete"
+  | "deleteCompleted"
   | "options"
-  | "scheduler";
+  | "scheduler"
+  | "startQueue"
+  | "stopQueue"
+  | "tellAFriend";
 
 interface ToolbarProps {
   store: DownloadsStore;
@@ -94,74 +48,43 @@ interface BtnProps {
 
 /** Dense utility-strip button: icon + label on ONE line (classic
  *  desktop toolbar), rectangular with a sharp hairline border. No
- *  rounded corners, no pill shapes (refactor rule 2). */
+ *  rounded corners, no pill shapes. */
 function Btn({ icon, label, onClick, disabled, variant = "default", title }: BtnProps) {
-  const base =
-    "inline-flex h-[24px] items-center gap-1.5 rounded-[2px] border border-transparent px-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40";
-  const color =
-    variant === "accent"
-      ? "text-[var(--accent-text)] hover:bg-[var(--accent-soft)]"
-      : variant === "danger"
-      ? "text-red-400 hover:bg-red-500/10"
-      : "text-txt-dim hover:bg-white/5 hover:text-txt";
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={title ?? label}
-      className={`${base} ${color}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => {
+        setHovered(false);
+        setPressed(false);
+      }}
+      onMouseDown={() => !disabled && setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      className="toolbar-btn inline-flex flex-col items-center justify-center min-w-[54px] px-1.5 h-[48px] select-none transition-all shrink-0 rounded-[4px] disabled:cursor-not-allowed disabled:opacity-30"
+      style={{
+        background: hovered && !disabled ? (pressed ? "var(--btn-active)" : "var(--btn-hover)") : "transparent",
+        border: hovered && !disabled
+          ? "1px solid var(--line)"
+          : "1px solid transparent",
+      }}
     >
-      <span className="inline-flex h-[14px] w-[14px] items-center justify-center">{icon}</span>
-      <span className="max-w-[86px] truncate text-[11px] leading-none">{label}</span>
+      <span className="inline-flex h-[28px] w-[28px] items-center justify-center pointer-events-none drop-shadow-sm">{icon}</span>
+      <span className="whitespace-nowrap text-[11px] leading-tight font-medium text-[var(--text)] mt-[2px] px-0.5 pointer-events-none">{label}</span>
     </button>
   );
 }
 
 function Sep() {
-  return <div className="toolbar__sep" aria-hidden />;
-}
-
-/** Bandwidth cap options shown in the toolbar selector. "0" means
- *  Unlimited (the default). The engine stores kbps in
- *  `speed_limit_kbps` and converts via *1024. */
-const BANDWIDTH_OPTIONS: Array<{ label: string; kbps: number }> = [
-  { label: "Unlimited", kbps: 0 },
-  { label: "1 MB/s", kbps: 1024 },
-  { label: "5 MB/s", kbps: 5 * 1024 },
-  { label: "10 MB/s", kbps: 10 * 1024 },
-];
-
-function BandwidthSelect({
-  settings,
-  onChange,
-}: {
-  settings: AppSettings | null;
-  onChange: (kbps: number) => void;
-}) {
-  const currentKbps = parseInt(String(settings?.speed_limit_kbps ?? "0"), 10) || 0;
-  const isPreset = BANDWIDTH_OPTIONS.some((o) => o.kbps === currentKbps);
-  const value = isPreset ? String(currentKbps) : "custom-" + currentKbps;
   return (
-    <div className="bw" title="Global bandwidth cap (applies to all downloads)">
-      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M5 2v3M11 2v3M5 11v3M11 11v3M2 5h3M2 11h3M11 5h3M11 11h3M8 5l-2 3h4l-2 3" />
-      </svg>
-      <select
-        className="bw__select"
-        value={value}
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v.startsWith("custom")) return;
-          onChange(parseInt(v, 10));
-        }}
-      >
-        {BANDWIDTH_OPTIONS.map((o) => (
-          <option key={o.kbps} value={String(o.kbps)}>{o.label}</option>
-        ))}
-        {!isPreset && <option value={"custom-" + currentKbps}>{currentKbps} kbps</option>}
-      </select>
-    </div>
+    <div
+      className="toolbar-group h-[32px] w-[1px] mx-1.5 self-center bg-[var(--line)] shrink-0 opacity-70"
+      aria-hidden
+    />
   );
 }
 
@@ -177,72 +100,97 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
     selTasks.length > 0 &&
     selTasks.every((t) => t.status !== "downloading");
 
+  const completedTasks = store.tasks.filter((t) => t.status === "completed");
+
   return (
-    <div className="toolbar border-b border-[var(--chrome-line)]">
-      <div className="flex min-w-max h-[30px] items-center gap-[3px] overflow-x-auto px-1.5">
-        {/* Primary action */}
+    <div className="toolbar flex h-[54px] shrink-0 items-center border-b border-[#E5E5E5] bg-[#F8F9FA] px-1 select-none overflow-x-auto flex-nowrap" style={{ overflowX: "auto", flexWrap: "nowrap" }}>
+      <div className="flex min-w-max h-full items-center gap-[2px] overflow-x-auto flex-nowrap" style={{ overflowX: "auto", flexWrap: "nowrap" }}>
+        {/* Group 1: Add URL, Resume, Stop, Stop All */}
         <Btn
-          icon={<IconAdd size={13} />}
+          icon={<IdmIconAdd size={32} />}
           label="Add URL"
           onClick={() => onAction("add")}
-          variant="accent"
           title="Add a new download (Ctrl+N)"
         />
-        <Sep />
-
-        {/* Download control */}
         <Btn
-          icon={<IconStart size={13} />}
+          icon={<IdmIconResume size={32} />}
           label="Resume"
           onClick={() => onAction("start")}
           disabled={!canResume}
-          variant="accent"
         />
         <Btn
-          icon={<IconPause size={13} />}
-          label="Pause"
+          icon={<IdmIconStop size={32} />}
+          label="Stop"
           onClick={() => onAction("pause")}
           disabled={!anyDownloading}
         />
         <Btn
-          icon={<IconStop size={13} />}
+          icon={<IdmIconStopAll size={32} />}
           label="Stop All"
           onClick={() => onAction("stopAll")}
           title="Stop every active download"
         />
+
         <Sep />
 
+        {/* Group 2: Delete, Delete Completed */}
         <Btn
-          icon={<IconDelete size={13} />}
+          icon={<IdmIconDelete size={32} />}
           label="Delete"
           onClick={() => onAction("delete")}
           disabled={selTasks.length === 0}
-          variant="danger"
         />
+        <Btn
+          icon={<IdmIconDeleteCompleted size={32} />}
+          label="Delete Comp."
+          onClick={() => onAction("deleteCompleted")}
+          disabled={completedTasks.length === 0}
+          title="Delete Completed Downloads"
+        />
+
         <Sep />
 
-        {/* Tools */}
+        {/* Group 3: Options, Scheduler */}
         <Btn
-          icon={<IconOptions size={13} />}
+          icon={<IdmIconOptions size={32} />}
           label="Options"
           onClick={() => onAction("options")}
         />
         <Btn
-          icon={<IconScheduler size={13} />}
+          icon={<IdmIconScheduler size={32} />}
           label="Scheduler"
           onClick={() => onAction("scheduler")}
         />
+
+        <Sep />
+
+        {/* Group 4: Start Queue, Stop Queue */}
         <Btn
-          icon={<IconGrabber size={13} />}
-          label="Site Grabber"
-          onClick={() => onAction("grabber")}
+          icon={<IdmIconStartQueue size={32} />}
+          label="Start Queue"
+          onClick={() => onAction("startQueue")}
+          title="Start Main Queue"
+        />
+        <Btn
+          icon={<IdmIconStopQueue size={32} />}
+          label="Stop Queue"
+          onClick={() => onAction("stopQueue")}
+          title="Stop Main Queue"
         />
 
-        <div className="flex-1" />
-        <ToolbarSearch store={store} />
-        <BandwidthSelect
-          settings={store.settings}
-          onChange={(kbps) => store.setBandwidth(kbps)}
+        <Sep />
+
+        {/* Group 5: Grabber, Tell a Friend */}
+        <Btn
+          icon={<IdmIconGrabber size={32} />}
+          label="Grabber"
+          onClick={() => onAction("grabber")}
+        />
+        <Btn
+          icon={<IdmIconTellAFriend size={32} />}
+          label="Tell a Friend"
+          onClick={() => onAction("tellAFriend")}
+          title="Tell a Friend / About"
         />
       </div>
     </div>

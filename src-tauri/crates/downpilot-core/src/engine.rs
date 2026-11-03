@@ -1346,6 +1346,23 @@ impl DownloadManager {
             return;
         }
 
+        // Pre-flight disk space check if total size is known.
+        let needed = task.total_size - task.downloaded;
+        if needed > 0 && !self.has_disk_space(&task.save_dir, needed) {
+            let err_msg = format!(
+                "Not enough free disk space in {} (need {}).",
+                task.save_dir,
+                crate::disk_free::human_bytes(needed)
+            );
+            let _ = self.db.set_status(task.id, Status::Failed, Some(&err_msg));
+            let _ = self.events.send(EngineEvent::StatusChanged {
+                id: task.id,
+                status: Status::Failed,
+                error: Some(err_msg),
+            });
+            return;
+        }
+
         let _ = self.db.set_status(task.id, Status::Downloading, None);
         // Persist the first-start timestamp (only when unset — a resume
         // must keep the ORIGINAL start so the average speed reflects the
@@ -1722,6 +1739,17 @@ impl DownloadManager {
                     .args(["hibernate"])
                     .spawn();
             }
+            "disconnect_net" => {
+                let _ = std::process::Command::new("nmcli")
+                    .args(["networking", "off"])
+                    .spawn();
+            }
+            "disconnect_vpn" => {
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("for c in $(nmcli -t -f UUID,TYPE connection show --active | grep ':vpn\\|:wireguard' | cut -d: -f1); do nmcli connection down uuid \"$c\"; done")
+                    .spawn();
+            }
             "run" if !q.on_complete_command.is_empty() => {
                 let _ = std::process::Command::new("sh")
                     .arg("-c")
@@ -1839,7 +1867,7 @@ impl DownloadManager {
         // an explicit opt-in via the `dangerous_actions` settings flag.
         // Without it, a misconfigured site rule or a stale task setting
         // could shut the user's machine down unexpectedly.
-        let is_destructive = matches!(spec.action.as_str(), "shutdown" | "suspend" | "hibernate");
+        let is_destructive = matches!(spec.action.as_str(), "shutdown" | "suspend" | "hibernate" | "disconnect_net" | "disconnect_vpn");
         if is_destructive && !self.settings().dangerous_actions.unwrap_or(false) {
             let _ = self.events.send(EngineEvent::Notify {
                 level: "warning".into(),
@@ -1950,6 +1978,17 @@ impl DownloadManager {
             "hibernate" => {
                 let _ = std::process::Command::new("systemctl")
                     .args(["hibernate"])
+                    .spawn();
+            }
+            "disconnect_net" => {
+                let _ = std::process::Command::new("nmcli")
+                    .args(["networking", "off"])
+                    .spawn();
+            }
+            "disconnect_vpn" => {
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("for c in $(nmcli -t -f UUID,TYPE connection show --active | grep ':vpn\\|:wireguard' | cut -d: -f1); do nmcli connection down uuid \"$c\"; done")
                     .spawn();
             }
             _ => {}
@@ -2119,6 +2158,30 @@ impl DownloadManager {
             error: None,
         });
         self.govern_concurrency();
+        Ok(())
+    }
+
+    pub fn update_url(self: &Arc<Self>, id: i64, new_url: &str) -> Result<(), String> {
+        let trimmed = new_url.trim();
+        if trimmed.is_empty() {
+            return Err("URL cannot be empty".into());
+        }
+        self.db
+            .update_url(id, trimmed)
+            .map_err(|e| e.to_string())?;
+        if let Ok(Some(task)) = self.db.get(id) {
+            let _ = self.events.send(EngineEvent::Finished { task });
+        }
+        Ok(())
+    }
+
+    pub fn update_cookies(self: &Arc<Self>, id: i64, cookies: &str) -> Result<(), String> {
+        self.db
+            .update_cookies(id, cookies.trim())
+            .map_err(|e| e.to_string())?;
+        if let Ok(Some(task)) = self.db.get(id) {
+            let _ = self.events.send(EngineEvent::Finished { task });
+        }
         Ok(())
     }
 
@@ -2979,81 +3042,106 @@ impl DownloadManager {
         rules: &crate::models::GrabRules,
     ) -> Result<Vec<GrabbedLink>, String> {
         let client = self.downloader.http_client();
-        let resp = client
-            .get(page_url)
-            .header("User-Agent", "DownPilot/0.1 (site grabber)")
-            .send()
-            .await
-            .map_err(|e| format!("fetch failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("server returned {}", resp.status()));
-        }
-        let html = resp.text().await.map_err(|e| format!("read failed: {e}"))?;
-
-        // Phase 3C: the regex captures the attribute NAME as group 1
-        // (href | src) and the URL as group 2. The source column in
-        // the grabber UI shows where each link came from.
         let attr_re = regex::Regex::new(r#"(?i)(href|src)\s*=\s*["']([^"']+)["']"#).unwrap();
         let ext_re = regex::Regex::new(
             r"(?i)\.(zip|rar|7z|tar|gz|bz2|xz|iso|img|exe|msi|apk|deb|rpm|appimage|dmg|sh|run|mp3|flac|wav|m4a|ogg|opus|mp4|mkv|webm|avi|mov|wmv|flv|m4v|ts|mpg|pdf|epub|djvu|docx?|xlsx?|pptx?|csv|sql|db|torrent)(\?|$)",
         )
         .unwrap();
 
+        let base_host = host_of(page_url);
+        let mut visited_pages = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<(String, usize)> = std::collections::VecDeque::new();
+        queue.push_back((page_url.to_string(), 0));
+
         let mut seen = std::collections::HashSet::new();
         let mut links = Vec::new();
-        for cap in attr_re.captures_iter(&html) {
-            let source = cap[1].to_ascii_lowercase();
-            let raw = cap[2].trim();
-            if raw.is_empty()
-                || raw.starts_with('#')
-                || raw.starts_with("mailto:")
-                || raw.starts_with("javascript:")
+        let max_pages = if rules.max_depth == 0 { 1 } else { rules.max_pages.max(1) };
+
+        while let Some((curr_url, curr_depth)) = queue.pop_front() {
+            if !visited_pages.insert(curr_url.clone()) {
+                continue;
+            }
+
+            let resp = match client
+                .get(&curr_url)
+                .header("User-Agent", "DownPilot/0.1 (site grabber)")
+                .send()
+                .await
             {
-                continue;
-            }
-            if !ext_re.is_match(raw) {
-                continue;
-            }
-            let absolute = resolve_url(page_url, raw);
-            if !seen.insert(absolute.clone()) {
-                continue;
-            }
-            let filename = absolute
-                .rsplit('/')
-                .next()
-                .unwrap_or("file")
-                .split(['?', '#'])
-                .next()
-                .unwrap_or("file")
-                .to_string();
-            let ext = filename
-                .rsplit('.')
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let category = category_for_ext(&ext);
-            // Apply rules.
-            let matched = match grabber_filter(&absolute, &ext, rules) {
-                Ok(m) => m,
-                Err(reason) => {
-                    // For the `Err` case, the link is dropped silently;
-                    // expose a `matched` value only when we kept it.
-                    let _ = reason;
+                Ok(r) if r.status().is_success() => r,
+                Ok(r) if curr_depth == 0 => return Err(format!("server returned {}", r.status())),
+                Err(e) if curr_depth == 0 => return Err(format!("fetch failed: {e}")),
+                _ => continue,
+            };
+
+            let html = match resp.text().await {
+                Ok(t) => t,
+                Err(_) if curr_depth == 0 => return Err("read html failed".into()),
+                _ => continue,
+            };
+
+            for cap in attr_re.captures_iter(&html) {
+                let source = cap[1].to_ascii_lowercase();
+                let raw = cap[2].trim();
+                if raw.is_empty()
+                    || raw.starts_with('#')
+                    || raw.starts_with("mailto:")
+                    || raw.starts_with("javascript:")
+                {
                     continue;
                 }
-            };
-            links.push(GrabbedLink {
-                url: absolute,
-                filename,
-                ext,
-                content_type: None,
-                size: 0,
-                category: Some(category),
-                matched,
-                source,
-            });
-            if links.len() >= limit {
-                break;
+
+                let absolute = resolve_url(&curr_url, raw);
+
+                // If this is a page link and we have remaining depth budget, enqueue for crawl
+                if curr_depth < rules.max_depth && visited_pages.len() < max_pages {
+                    let h = host_of(&absolute);
+                    let ok_host = !rules.same_domain_only || h == base_host;
+                    let is_web = absolute.starts_with("http://") || absolute.starts_with("https://");
+                    let is_doc = !ext_re.is_match(&absolute);
+                    if ok_host && is_web && is_doc && !visited_pages.contains(&absolute) {
+                        queue.push_back((absolute.clone(), curr_depth + 1));
+                    }
+                }
+
+                if !ext_re.is_match(raw) {
+                    continue;
+                }
+
+                if !seen.insert(absolute.clone()) {
+                    continue;
+                }
+                let filename = absolute
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("file")
+                    .split(['?', '#'])
+                    .next()
+                    .unwrap_or("file")
+                    .to_string();
+                let ext = filename
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let category = category_for_ext(&ext);
+                let matched = match grabber_filter(&absolute, &ext, rules) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                links.push(GrabbedLink {
+                    url: absolute,
+                    filename,
+                    ext,
+                    content_type: None,
+                    size: 0,
+                    category: Some(category),
+                    matched,
+                    source,
+                });
+                if links.len() >= limit {
+                    return Ok(links);
+                }
             }
         }
         Ok(links)

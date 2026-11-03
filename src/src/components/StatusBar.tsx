@@ -27,123 +27,47 @@ export function StatusBar({ store }: { store: DownloadsStore }) {
   const cap = (store.settings?.speed_limit_kbps ?? 0) > 0
     ? (store.settings!.speed_limit_kbps as number) * 1024
     : 0;
-  const seg = "px-3 text-xs text-txt-dim";
-  const num = "ml-1 font-mono tabular-nums text-txt";
-  const active: ActiveProfile[] = store.activeProfiles ?? [];
-  const firstProfile = active[0];
+  const pane = "px-2 text-[11px] text-[var(--text-dim)] h-[22px] flex items-center select-none bg-[var(--surface)] border border-[var(--line)] rounded-[3px]";
+  const num = "ml-1 font-mono tabular-nums text-[var(--text)] font-medium";
+
   return (
-    <div className="flex h-7 shrink-0 items-center border-t border-white/5 bg-surface text-xs">
-      {/* Left: counts */}
-      <div className={seg} title="Total downloads (all states)">
-        <span className="text-txt-faint">Total:</span>
+    <div className="flex h-[28px] shrink-0 items-center border-t border-[var(--line)] bg-[var(--bg-toolbar)] px-2 text-[11px] gap-2 select-none relative">
+      {/* Glowing neon progress line across top of status bar */}
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 opacity-80" />
+
+      {/* Pane 1: Total / Active / Paused */}
+      <div className={`${pane} min-w-[210px]`} title="Download state counters">
+        <span>Total:</span>
         <span className={num}>{c.all ?? 0}</span>
-      </div>
-      <div className="h-3 w-px bg-white/5" />
-      <div className={seg} title="Downloads transferring right now">
-        <span className="text-txt-faint">Active:</span>
+        <span className="mx-1.5 text-gray-500">|</span>
+        <span>Active:</span>
         <span className={num}>{s.activeCount}</span>
-      </div>
-      <div className="h-3 w-px bg-white/5" />
-      <div className={seg} title="Downloads in paused or stopped state">
-        <span className="text-txt-faint">Paused:</span>
+        <span className="mx-1.5 text-gray-500">|</span>
+        <span>Paused:</span>
         <span className={num}>{c.paused ?? 0}</span>
       </div>
-      <div className="h-3 w-px bg-white/5" />
-      <div className={seg} title="Downloads waiting for a queue slot">
-        <span className="text-txt-faint">Queued:</span>
-        <span className={num}>{c.queued ?? 0}</span>
+
+      {/* Pane 2: Remaining bytes */}
+      <div className={`${pane} min-w-[150px]`} title="Total remaining bytes">
+        <span className="font-mono">{formatBytes(s.remaining)}</span>
+        <span className="text-gray-400 ml-1">remaining</span>
       </div>
-      <div className="h-3 w-px bg-white/5" />
-      <div className={seg} title="Bytes still to download across active tasks">
-        <span className={num}>{formatBytes(s.remaining)}</span>
-        <span className="text-txt-faint"> remaining</span>
-      </div>
-      {firstProfile && (
-        <>
-          <div className="h-3 w-px bg-white/5" />
-          <div
-            className={seg + " flex items-center gap-1.5"}
-            title={
-              "Schedule active: " +
-              firstProfile.name +
-              " · affecting " +
-              firstProfile.affected_queues.join(", ")
-            }
-          >
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-[1px] bg-amber-300" />
-            <span className="text-amber-200/90">⏱ {firstProfile.name}</span>
-            {firstProfile.affected_queues.length > 0 && (
-              <span className="text-txt-faint">·</span>
-            )}
-            {firstProfile.affected_queues.slice(0, 3).map((q, i) => (
-              <span key={i} className="text-txt-faint tabular-nums">
-                {q}={formatKbps(store.effectiveSpeed?.[q] ?? 0)}
-              </span>
-            ))}
-            {firstProfile.affected_queues.length > 3 && (
-              <span className="text-txt-faint">
-                +{firstProfile.affected_queues.length - 3}
-              </span>
-            )}
-            {active.length > 1 && (
-              <span className="text-txt-faint">+{active.length - 1}</span>
-            )}
-          </div>
-        </>
-      )}
-      {store.schedulerStatus && (
-        <>
-          <div className="h-3 w-px bg-white/5" />
-          <div
-            className={seg}
-            title={
-              store.schedulerStatus.global_max_simultaneous > 0
-                ? `Global concurrency: ${store.schedulerStatus.global_active} active of ${store.schedulerStatus.global_max_simultaneous}; ${store.schedulerStatus.global_queued} queued.`
-                : `Global concurrency: ${store.schedulerStatus.global_active} active; ${store.schedulerStatus.global_queued} queued.`
-            }
-          >
-            <span className="text-txt-faint">glb</span>{" "}
-            <span className={num}>
-              {store.schedulerStatus.global_active}
-              {store.schedulerStatus.global_max_simultaneous > 0
-                ? `/${store.schedulerStatus.global_max_simultaneous}`
-                : ""}
-            </span>
-            <span className="text-txt-faint"> active</span>{" "}
-            <span className={num}>{store.schedulerStatus.global_queued}</span>{" "}
-            <span className="text-txt-faint">queued</span>
-          </div>
-        </>
-      )}
+
+      {/* Spacer to push right panes */}
       <div className="flex-1" />
 
-      {/* Phase 3A: in-app toast for the most recent engine
-          notification. Auto-dismisses after 6s; click × to clear. */}
-      {store.lastNotification && (
-        <NotificationToast
-          key={store.lastNotification.at}
-          level={store.lastNotification.level}
-          title={store.lastNotification.title}
-          body={store.lastNotification.body}
-          onDismiss={store.dismissNotification}
-        />
-      )}
+      {/* Pane 3: Speed & Limit Cap */}
+      <div className={`${pane} min-w-[170px]`} title="Download Speed and Bandwidth Limit">
+        <span>Speed:</span>
+        <span className={num}>{formatSpeed(s.activeSpeed)}</span>
+        <span className="mx-1.5 text-gray-500">|</span>
+        <span>Cap:</span>
+        <span className={num}>{cap > 0 ? formatSpeed(cap) : "Off"}</span>
+      </div>
 
-      {/* Right: aggregate speed + limit state (IDM footer layout) */}
-      <div className={seg} title={cap > 0 ? `Global cap: ${formatSpeed(cap)}` : "No global bandwidth cap"}>
-        <span className="text-txt-faint">Total Download Speed:</span>
-        <span className={num + " text-emerald-300"}>{formatSpeed(s.activeSpeed)}</span>
-      </div>
-      <div className="h-3 w-px bg-white/5" />
-      <div className={seg} title="Global bandwidth cap (change it from the toolbar)">
-        <span className="text-txt-faint">Speed Limit:</span>
-        <span className={"ml-1 font-mono tabular-nums " + (cap > 0 ? "text-amber-300" : "text-txt-faint")}>
-          {cap > 0 ? formatSpeed(cap) : "Disabled"}
-        </span>
-      </div>
-      <div className="h-3 w-px bg-white/5" />
-      <div className={seg + " text-txt-faint"}>
-        DownPilot v{store.version}
+      {/* Pane 4: App version */}
+      <div className={`${pane} min-w-[110px] justify-center`}>
+        <span className="font-mono text-cyan-400 font-semibold">DownPilot v2.0.0</span>
       </div>
     </div>
   );

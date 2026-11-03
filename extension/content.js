@@ -24,14 +24,14 @@
         @import url('data:text/css,${encodeURIComponent(
           `
           .dp-btn {
-            display:flex;align-items:center;gap:6px;padding:6px 12px;
-            border:none;border-radius:8px;cursor:grab;font-size:13px;font-weight:600;
-            background:rgba(124,92,255,0.92);color:#fff;pointer-events:auto;
-            box-shadow:0 4px 16px rgba(0,0,0,0.45);transition:all 0.15s;
-            white-space:nowrap;user-select:none;-webkit-user-select:none;
+            display:flex;align-items:center;gap:6px;padding:4px 8px;
+            border:1px solid #7f9db9;border-radius:2px;cursor:grab;font-size:11.5px;font-weight:700;
+            background:linear-gradient(to bottom, #fefefe, #ece9d8);color:#0a246a;pointer-events:auto;
+            box-shadow:1px 1px 4px rgba(0,0,0,0.3);transition:none;
+            white-space:nowrap;user-select:none;-webkit-user-select:none;font-family:Tahoma,sans-serif;
           }
-          .dp-btn:hover { background:#7c5cff; transform:scale(1.04); }
-          .dp-btn svg { width:16px;height:16px; }
+          .dp-btn:hover { background:linear-gradient(to bottom, #ffffff, #dcd7c5); border-color:#0a246a; }
+          .dp-btn svg { width:14px;height:14px;color:#007700; }
           .dp-close {
             position:absolute;top:-8px;right:-8px;width:18px;height:18px;
             border:none;border-radius:50%;padding:0;
@@ -284,8 +284,8 @@
     if (!buttonEl) {
       buttonEl = document.createElement("button");
       buttonEl.className = "dp-btn";
-      buttonEl.title = "Drag to move · Click to download";
-      buttonEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> DownPilot`;
+      buttonEl.title = "IDM · Drag to move · Click to download";
+      buttonEl.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Download this video`;
 
       // --- Drag to move (IDM-style) ---
       buttonEl.addEventListener("mousedown", (e) => {

@@ -40,29 +40,26 @@ export interface ColumnDef {
 }
 
 export const COLUMNS: ColumnDef[] = [
-  { id: "name",        label: "File Name",   defaultWidth: 280, minWidth: 140 },
-  { id: "size",        label: "Size",        right: true,  defaultWidth: 88,  minWidth: 60 },
-  { id: "status",      label: "Status",      right: true,  defaultWidth: 150, minWidth: 96 },
-  { id: "time_left",   label: "Time Left",   right: true,  defaultWidth: 80,  minWidth: 64 },
-  { id: "speed",       label: "Speed",       right: true,  defaultWidth: 92,  minWidth: 64 },
-  { id: "progress",    label: "Progress",                   defaultWidth: 160, minWidth: 100, defaultVisible: false },
-  { id: "last_try",    label: "Last Try",    right: true,  defaultWidth: 132, minWidth: 96 },
-  { id: "queue",       label: "Queue Name",                 defaultWidth: 120, minWidth: 80 },
-  { id: "speed_graph", label: "Graph",                      defaultWidth: 96,  minWidth: 64, defaultVisible: false },
-  { id: "downloaded",  label: "Done",        right: true,  defaultWidth: 72,  minWidth: 60, defaultVisible: false },
-  { id: "avg_speed",   label: "Avg Speed",   right: true,  defaultWidth: 92,  minWidth: 72, defaultVisible: false },
-  { id: "connections", label: "Conn",        right: true,  defaultWidth: 60,  minWidth: 48, defaultVisible: false },
-  { id: "category",    label: "Category",                   defaultWidth: 100, minWidth: 80, defaultVisible: false },
-  { id: "added",       label: "Added",       right: true,  defaultWidth: 88,  minWidth: 72, defaultVisible: false },
-  { id: "save_to",     label: "Save To",                    defaultWidth: 200, minWidth: 120, defaultVisible: false },
-  { id: "description", label: "Description",                defaultWidth: 200, minWidth: 100, defaultVisible: false },
+  { id: "name",        label: "File Name",       defaultWidth: 260, minWidth: 150 },
+  { id: "queue",       label: "Q",               defaultWidth: 28,  minWidth: 28 },
+  { id: "size",        label: "Size",            right: true,  defaultWidth: 75,  minWidth: 75 },
+  { id: "status",      label: "Status",          defaultWidth: 80,  minWidth: 80 },
+  { id: "time_left",   label: "Time left",       right: true,  defaultWidth: 75,  minWidth: 75 },
+  { id: "speed",       label: "Transfer rate",   right: true,  defaultWidth: 100, minWidth: 100 },
+  { id: "last_try",    label: "Last Try Date",   defaultWidth: 110, minWidth: 110 },
+  { id: "description", label: "Description",     defaultWidth: 180, minWidth: 120 },
+  { id: "progress",    label: "Progress",        defaultWidth: 140, minWidth: 90, defaultVisible: false },
+  { id: "speed_graph", label: "Graph",           defaultWidth: 96,  minWidth: 64, defaultVisible: false },
+  { id: "downloaded",  label: "Done",            right: true,  defaultWidth: 72,  minWidth: 60, defaultVisible: false },
+  { id: "avg_speed",   label: "Avg Speed",       right: true,  defaultWidth: 92,  minWidth: 72, defaultVisible: false },
+  { id: "connections", label: "Conn",            right: true,  defaultWidth: 60,  minWidth: 48, defaultVisible: false },
+  { id: "category",    label: "Category",        defaultWidth: 100, minWidth: 80, defaultVisible: false },
+  { id: "added",       label: "Added",           right: true,  defaultWidth: 88,  minWidth: 72, defaultVisible: false },
+  { id: "save_to",     label: "Save To",         defaultWidth: 200, minWidth: 120, defaultVisible: false },
 ];
 
-// v4: IDM strict grid (File Name / Size / Status / Time Left / Speed /
-// Last Try / Queue Name / Progress). Last Try + Queue Name are
-// default-visible per spec. Bumped so persisted v3 layouts don't mask
-// the new defaults on existing installs.
-const STORAGE_KEY = "downpilot.columns.v4";
+// v8: Strict IDM column widths & fluid File Name
+const STORAGE_KEY = "downpilot.columns.v8";
 
 export interface ColumnConfig {
   /** Ordered list of visible column ids. */
@@ -192,10 +189,15 @@ export function useColumnConfig() {
     setCfg({ order, visibility, widths });
   }, []);
 
-  /** Build a CSS grid template string for the visible columns, in order. */
+  /** Build a CSS grid template string for the visible columns, in order.
+   *  Keeps 'name' (File Name) fluid (minmax(150px, 1fr)) while keeping other columns fixed.
+   */
   const gridTemplate = cfg.order
     .filter((id) => cfg.visibility[id])
     .map((id) => {
+      if (id === "name") {
+        return "minmax(150px, 1fr)";
+      }
       const w = cfg.widths[id] ?? 100;
       return `${w}px`;
     })

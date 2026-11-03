@@ -218,8 +218,6 @@ function ScheduleEditor({
     onChange({ ...s, overrides_json: overridesToJson(next) });
   };
 
-  // Default-suggested bandwidth = the queue's own configured cap. This
-  // makes "set Night = same cap as queue" a single click.
   const suggestion = (qname: string) =>
     queues.find((q) => q.name === qname)?.speed_limit_kbps ?? 0;
 
@@ -232,154 +230,168 @@ function ScheduleEditor({
   }
 
   return (
-    <div className="form">
-      <div className="form-grid">
-        <Field label="Name">
-          <input
-            className="input"
-            value={s.name}
-            onChange={(e) => onChange({ ...s, name: e.target.value })}
-            placeholder="Night Profile"
-          />
-       </Field>
-        <Field label="Type">
-          <select
-            className="select"
-            value={s.kind}
-            onChange={(e) => onChange({ ...s, kind: e.target.value })}
-          >
-            <option value="weekly">Weekly (days</option>
-            <option value="daily">Daily</option>
-            <option value="once">One-time</option>
-         </select>
-       </Field>
-        <Field label="Action">
-          <select
-            className="select"
-            value={s.action}
-            onChange={(e) => onChange({ ...s, action: e.target.value })}
-          >
-            <option value="bandwidth">Bandwidth limit</option>
-            <option value="start">Start queue</option>
-            <option value="stop">Stop queue</option>
-         </select>
-       </Field>
-        <Field label="Priority (higher wins on overlap)">
-          <input
-            type="number"
-            className="input"
-            value={s.priority ?? 100}
-            onChange={(e) =>
-              onChange({ ...s, priority: Number(e.target.value) })
-            }
-          />
-       </Field>
-        <Field label="Start (HH:MM)">
-          <input
-            className="input"
-            value={s.start_time}
-            onChange={(e) => onChange({ ...s, start_time: e.target.value })}
-            placeholder="23:00"
-          />
-       </Field>
-        <Field label="End (HH:MM)">
-          <input
-            className="input"
-            value={s.end_time}
-            onChange={(e) => onChange({ ...s, end_time: e.target.value })}
-            placeholder="06:00"
-          />
-       </Field>
-     </div>
+    <div className="flex flex-col gap-2">
+      <fieldset className="groupbox">
+        <legend>Schedule Profile</legend>
+        <div className="form-grid-kv">
+          <dt>Name</dt>
+          <dd>
+            <input
+              className="input w-full"
+              value={s.name}
+              onChange={(e) => onChange({ ...s, name: e.target.value })}
+              placeholder="Night Profile"
+            />
+          </dd>
+
+          <dt>Type</dt>
+          <dd>
+            <select
+              className="select w-full"
+              value={s.kind}
+              onChange={(e) => onChange({ ...s, kind: e.target.value })}
+            >
+              <option value="weekly">Weekly (days)</option>
+              <option value="daily">Daily</option>
+              <option value="once">One-time</option>
+            </select>
+          </dd>
+
+          <dt>Action</dt>
+          <dd>
+            <select
+              className="select w-full"
+              value={s.action}
+              onChange={(e) => onChange({ ...s, action: e.target.value })}
+            >
+              <option value="bandwidth">Bandwidth limit</option>
+              <option value="start">Start queue</option>
+              <option value="stop">Stop queue</option>
+            </select>
+          </dd>
+
+          <dt>Priority</dt>
+          <dd>
+            <input
+              type="number"
+              className="input w-28"
+              value={s.priority ?? 100}
+              onChange={(e) =>
+                onChange({ ...s, priority: Number(e.target.value) })
+              }
+            />
+          </dd>
+
+          <dt>Start time</dt>
+          <dd>
+            <input
+              className="input w-28"
+              value={s.start_time}
+              onChange={(e) => onChange({ ...s, start_time: e.target.value })}
+              placeholder="23:00"
+            />
+          </dd>
+
+          <dt>End time</dt>
+          <dd>
+            <input
+              className="input w-28"
+              value={s.end_time}
+              onChange={(e) => onChange({ ...s, end_time: e.target.value })}
+              placeholder="06:00"
+            />
+          </dd>
+        </div>
+      </fieldset>
 
       {s.kind === "weekly" && (
-        <div className="field">
-          <span className="field__label">Days</span>
-          <div className="day-picker">
+        <fieldset className="groupbox">
+          <legend>Active Days</legend>
+          <div className="flex gap-1.5 flex-wrap">
             {DAYS.map((d, i) => (
               <button
                 key={d}
                 type="button"
-                className={`day-pick ${(s.days >> i) & 1 ? "on" : ""}`}
+                className={`btn btn--sm ${(s.days >> i) & 1 ? "btn--primary" : "btn--ghost"}`}
                 onClick={() => onToggleDay(i)}
               >
                 {d}
-             </button>
+              </button>
             ))}
-         </div>
-       </div>
+          </div>
+        </fieldset>
       )}
 
       {s.action === "bandwidth" && (
-        <div className="field">
-          <span className="field__label">Bandwidth per queue (kbps, 0=unlimited</span>
-          <div className="bw-overrides">
+        <fieldset className="groupbox">
+          <legend>Bandwidth per Queue (kbps, 0 = unlimited)</legend>
+          <div className="flex flex-col gap-2">
             {queues.map((q) => {
               const v = overrides[q.name] ?? 0;
               const sug = suggestion(q.name);
               return (
-                <div key={q.name} className="bw-overrides__row">
-                  <span className="bw-overrides__name">{q.label || q.name}</span>
+                <div key={q.name} className="flex items-center gap-2">
+                  <span className="w-28 truncate text-xs font-medium">{q.label || q.name}</span>
                   <input
                     type="number"
-                    className="input"
+                    className="input w-24"
                     value={v}
                     onChange={(e) => setOverride(q.name, Number(e.target.value))}
                     placeholder={sug > 0 ? `default ${sug}` : "unlimited"}
                   />
                   <button
                     type="button"
-                    className="btn btn--ghost btn--sm"
+                    className="btn btn--sm"
                     onClick={() => setOverride(q.name, sug)}
                     disabled={sug === v}
                     title="Use the queue's configured limit"
                   >
-                    Use queue default
-                 </button>
+                    Queue default
+                  </button>
                   <button
                     type="button"
-                    className="btn btn--ghost btn--sm"
+                    className="btn btn--sm"
                     onClick={() => setOverride(q.name, 0)}
                     disabled={v === 0}
                     title="Unlimited while this profile is active"
                   >
                     Unlimited
-                 </button>
-               </div>
+                  </button>
+                </div>
               );
             })}
             {queues.length === 0 && (
-              <div className="form-hint">No queues configured yet</div>
+              <div className="text-xs text-gray-500">No queues configured yet</div>
             )}
-         </div>
-       </div>
+          </div>
+        </fieldset>
       )}
 
-      <label className="check">
+      <label className="check mt-1">
         <input
           type="checkbox"
           checked={s.enabled}
           onChange={(e) => onChange({ ...s, enabled: e.target.checked })}
         />
-        Enabled
-     </label>
+        <span>Enabled</span>
+      </label>
 
       {conflicts.length > 0 && (
-        <div className="form-warn">
+        <div className="text-xs text-amber-600 bg-amber-50 p-2 border border-amber-200 rounded">
           {conflicts.map((c, i) => (
             <div key={i}>{c}</div>
           ))}
-       </div>
+        </div>
       )}
 
-      <div className="dialog-actions">
+      <div className="flex justify-end gap-2 mt-2">
         <Btn variant="ghost" onClick={onCancel}>
           Cancel
-       </Btn>
+        </Btn>
         <Btn variant="primary" onClick={onSave} disabled={!s.name.trim()}>
           Save
-       </Btn>
-     </div>
-   </div>
+        </Btn>
+      </div>
+    </div>
   );
 }

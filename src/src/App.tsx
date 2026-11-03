@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useDownloads } from "./store/useDownloads";
+import { TitleBar } from "./components/TitleBar";
 import { MenuBar } from "./components/MenuBar";
 import { Toolbar, type ToolbarAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
@@ -22,8 +23,11 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { SchedulerPanel } from "./components/SchedulerPanel";
 import { QueuesPanel } from "./components/QueuesPanel";
 import { AboutDialog } from "./components/AboutDialog";
+import { ShortcutsDialog } from "./components/ShortcutsDialog";
 import { BatchDialog } from "./components/BatchDialog";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { subscribeToClipboard } from "./lib/api";
+import { applyTheme } from "./themes";
 import { useI18n } from "./i18n";
 import * as api from "./lib/api";
 
@@ -59,6 +63,7 @@ export default function App() {
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [queuesOpen, setQueuesOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [propsId, setPropsId] = useState<number | null>(null);
   /** IDM-style per-segment progress window (double-click a running row). */
@@ -74,16 +79,33 @@ export default function App() {
     null
   );
   const [dragHover, setDragHover] = useState(false);
-  /** List layout: "cards" is the modern panel default, "table" is the
-   *  dense column grid. Persisted so the choice survives restarts. */
+  /** List layout: "table" is the dense IDM column grid default. Persisted so the choice survives restarts. */
   const [viewMode, setViewMode] = useState<"cards" | "table">(() => {
     try {
       const v = localStorage.getItem("downpilot.view.mode");
-      return v === "table" ? "table" : "cards";
+      return v === "cards" ? "cards" : "table";
     } catch {
-      return "cards";
+      return "table";
     }
   });
+
+  useEffect(() => {
+    const th = store.settings?.theme || "deep-midnight";
+    applyTheme(th, store.settings?.accent ?? undefined);
+    try {
+      localStorage.setItem("downpilot.theme", th);
+    } catch {}
+  }, [store.settings?.theme, store.settings?.accent]);
+
+  useEffect(() => {
+    const unsub = subscribeToClipboard((url) => {
+      if (url && looksLikeUrl(url)) {
+        setAddUrl(url);
+        setAddOpen(true);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     try {
@@ -114,28 +136,44 @@ export default function App() {
 
   const onRowContext = useCallback(
     (id: number, x: number, y: number) => {
+      if (!store.selected.has(id)) {
+        store.selectOnly(id);
+      }
       const ids = store.selected.has(id) ? Array.from(store.selected) : [id];
       setCtx({ x, y, ids });
     },
-    [store.selected]
+    [store]
   );
 
-  /** Double-click on a row: Open File for done, IDM-style segment
-   *  window for a transfer in flight, Properties for everything else. */
+  /** Double-click on a row: Open File for completed downloads,
+   *  or open IDM download progress dialog for in-flight/other transfers. */
   const onRowActivate = useCallback(
     (id: number) => {
       const t = store.tasks.find((x) => x.id === id);
       if (!t) return;
       if (t.status === "completed") {
         void store.openFile(t);
-      } else if (t.status === "downloading") {
-        setSegmentsId(id);
       } else {
-        setPropsId(id);
+        setSegmentsId(id);
       }
     },
     [store]
   );
+
+  // Auto-open IDM's floating download progress modal when an active download starts
+  const prevDownloadingRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const currentlyDownloading = new Set(
+      store.tasks.filter((t) => t.status === "downloading").map((t) => t.id)
+    );
+    for (const id of currentlyDownloading) {
+      if (!prevDownloadingRef.current.has(id)) {
+        setSegmentsId(id);
+        break;
+      }
+    }
+    prevDownloadingRef.current = currentlyDownloading;
+  }, [store.tasks]);
 
   /** Rename a single task. Used by F2 / context menu. */
   const renameSelected = useCallback(() => {
@@ -329,6 +367,9 @@ export default function App() {
         case "delete":
           store.bulk((id) => store.remove(id));
           break;
+        case "deleteCompleted":
+          store.clearFinished();
+          break;
         case "stopAll":
           void store.stopAll();
           break;
@@ -338,13 +379,23 @@ export default function App() {
         case "scheduler":
           setSchedulerOpen(true);
           break;
+        case "startQueue":
+          void store.resumeAll();
+          break;
+        case "stopQueue":
+          void store.stopAll();
+          break;
+        case "tellAFriend":
+          setAboutOpen(true);
+          break;
       }
     },
     [store]
   );
 
   return (
-    <div className="app-root flex h-screen flex-col overflow-hidden bg-bg text-txt">
+    <div className="app-root flex h-screen flex-col overflow-hidden bg-[var(--bg)] text-[var(--text)] select-none">
+      <TitleBar />
       <MenuBar
         store={store}
         onAdd={() => {
@@ -363,6 +414,7 @@ export default function App() {
         onSettings={() => setOptionsOpen(true)}
         onHistory={() => setHistoryOpen(true)}
         onAbout={() => setAboutOpen(true)}
+        onShortcuts={() => setShortcutsOpen(true)}
         onOpenProps={() => {
           const id = Array.from(store.selected)[0];
           if (id !== undefined) setPropsId(id);
@@ -371,159 +423,65 @@ export default function App() {
         onToggleDetails={() => setDetailsOpen((open) => !open)}
       />
       <Toolbar store={store} onAction={handleToolbar} />
-      <div className="flex min-h-0 flex-1 gap-3 p-3">
-        <Sidebar
-          active={store.sidebarKey}
-          onSelect={store.setSidebarKey}
-          counts={store.counts}
-          categories={store.categories}
-          queues={store.queues}
-          tasks={store.tasks}
-          effectiveSpeed={(q: string) => store.effectiveSpeed[q] ?? 0}
-          activeProfiles={store.activeProfiles}
-        />
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          {/* KPI strip — card/panel language: four sibling stat panels. */}
-          <div className="grid shrink-0 grid-cols-4 gap-3">
-            {[
-              { k: "Total", v: store.counts.all ?? 0, tone: "text-txt", sub: "downloads" },
-              { k: "Active", v: store.stats.activeCount, tone: "text-[var(--success)]", sub: "transferring" },
-              { k: "Unfinished", v: store.counts.unfinished ?? 0, tone: "text-[var(--warning)]", sub: "not completed" },
-              { k: "Failed", v: store.counts.failed ?? 0, tone: "text-[var(--danger)]", sub: "need retry" },
-            ].map((s) => (
-              <div
-                key={s.k}
-                className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow)]"
-              >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-faint)]">
-                  {s.k}
-                </div>
-                <div className={`mt-1 text-[22px] font-bold leading-none tabular-nums ${s.tone}`}>
-                  {s.v}
-                </div>
-                <div className="mt-1 text-[11px] text-[var(--text-faint)]">{s.sub}</div>
-              </div>
-            ))}
-          </div>
+      {/* ===================== Panels Container ===================== */}
+      <div className="flex min-h-0 flex-1 p-0 bg-[var(--bg)]">
+        {/* Sidebar with flat border */}
+        <div
+          className="win32-sunken-panel flex shrink-0 bg-[var(--bg-sidebar)] overflow-hidden"
+          style={{ borderRight: "1px solid var(--line)" }}
+        >
+          <Sidebar
+            active={store.sidebarKey}
+            onSelect={store.setSidebarKey}
+            counts={store.counts}
+            categories={store.categories}
+            queues={store.queues}
+            tasks={store.tasks}
+            effectiveSpeed={(q: string) => store.effectiveSpeed[q] ?? 0}
+            activeProfiles={store.activeProfiles}
+          />
+        </div>
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)]">
-          <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--line)] px-4 text-xs text-txt-dim">
-            <span className="text-[13px] font-semibold text-txt">Downloads</span>
-            <span className="rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[11px] font-medium tabular-nums">
-              {store.filtered.length}
-            </span>
-            {store.search && <span className="truncate text-gray-500">for “{store.search}”</span>}
-            <div className="flex-1" />
-            {/* Layout switch: panel grid vs dense column grid. */}
-            <div className="flex items-center rounded-[var(--radius-sm)] border border-[var(--line)] bg-[var(--surface-2)] p-[2px]">
-              <button
-                type="button"
-                onClick={() => setViewMode("cards")}
-                aria-pressed={viewMode === "cards"}
-                title="Panel view"
-                className={`rounded-[6px] px-2 py-[3px] text-[11px] font-semibold transition-colors ${
-                  viewMode === "cards"
-                    ? "bg-[var(--surface-4)] text-[var(--accent-text)]"
-                    : "text-txt-faint hover:text-txt"
-                }`}
-              >
-                Panels
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("table")}
-                aria-pressed={viewMode === "table"}
-                title="Table view"
-                className={`rounded-[6px] px-2 py-[3px] text-[11px] font-semibold transition-colors ${
-                  viewMode === "table"
-                    ? "bg-[var(--surface-4)] text-[var(--accent-text)]"
-                    : "text-txt-faint hover:text-txt"
-                }`}
-              >
-                Table
-              </button>
-            </div>
-            <label className="flex items-center gap-2">
-              <span className="sr-only">Filter downloads by status</span>
-              <select
-                aria-label="Filter downloads by status"
-                className="h-6 rounded-[2px] border border-white/10 bg-surface-2 px-2 text-xs text-txt-dim outline-none focus:border-[var(--accent)]"
-                value={store.sidebarKey.kind === "status" ? String(store.sidebarKey.value) : "all"}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === "all") {
-                    store.setSidebarKey({ kind: "all" });
-                  } else if (value === "unfinished" || value === "paused" || value === "finished" || value === "failed") {
-                    store.setSidebarKey({ kind: "status", value });
+        {/* Solid 4px vertical splitter bar */}
+        <div
+          className="w-[4px] shrink-0 bg-[var(--bg)] cursor-col-resize hover:bg-[var(--surface-3)] transition-colors"
+          style={{ cursor: "col-resize" }}
+        />
+
+        {/* Main ListView with Flat Border */}
+        <div
+          className="win32-sunken-panel flex min-w-0 flex-1 bg-[var(--table-bg)] overflow-hidden"
+          style={{ border: "1px solid var(--line)" }}
+        >
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--table-bg)]">
+            <div className="min-h-0 flex-1 overflow-auto bg-[var(--table-bg)]">
+              <DownloadTable
+                tasks={store.tasks}
+                grouped={store.grouped}
+                selected={store.selected}
+                sort={store.sort}
+                onSortChange={store.setSort}
+                onSelect={onSelect}
+                onRetry={(id) => store.redownload(id)}
+                onToggleAll={() => {
+                  const ids = store.filtered.map((task) => task.id);
+                  if (ids.length > 0 && ids.every((id) => store.selected.has(id))) {
+                    store.clearSelection();
+                  } else if (ids.length > 0) {
+                    store.selectOnly(ids[0]);
+                    for (const id of ids.slice(1)) store.toggleSelect(id);
                   }
                 }}
-              >
-                <option value="all">All statuses</option>
-                <option value="unfinished">Active</option>
-                <option value="paused">Paused</option>
-                <option value="finished">Finished</option>
-                <option value="failed">Failed</option>
-              </select>
-            </label>
-          </div>
-          {viewMode === "cards" ? (
-            <DownloadCards
-              tasks={store.tasks}
-              grouped={store.grouped}
-              selected={store.selected}
-              onSelect={onSelect}
-              onRetry={(id) => store.redownload(id)}
-              onContextMenu={onRowContext}
-              onRowActivate={onRowActivate}
-              onPause={(id) => store.pause(id)}
-              onResume={(id) => store.resume(id)}
-              onRemove={(id) => void store.remove(id)}
-              sidebarKey={store.sidebarKey}
-              search={store.search}
-              speedHistory={store.getSpeedHistory}
-            />
-          ) : (
-            <div className="min-h-0 flex-1 overflow-auto">
-          <DownloadTable
-            tasks={store.tasks}
-            grouped={store.grouped}
-            selected={store.selected}
-            sort={store.sort}
-            onSortChange={store.setSort}
-            onSelect={onSelect}
-            onRetry={(id) => store.redownload(id)}
-            onToggleAll={() => {
-              const ids = store.filtered.map((task) => task.id);
-              if (ids.length > 0 && ids.every((id) => store.selected.has(id))) {
-                store.clearSelection();
-              } else if (ids.length > 0) {
-                store.selectOnly(ids[0]);
-                for (const id of ids.slice(1)) store.toggleSelect(id);
-              }
-            }}
-            onContextMenu={onRowContext}
-            onRowActivate={onRowActivate}
-            groupBy={store.groupBy}
-            speedHistory={store.getSpeedHistory}
-            sidebarKey={store.sidebarKey}
-            search={store.search}
-          />
-          </div>
-          )}
-       </main>
-        {/* Phase 3A: mount DetailsPanel for the selected download. Was
-            imported-but-dead; now lives to the right of the table
-            and shows quick info (filename, size, status, speed, ETA,
-            category, queue, source, destination) without forcing the
-            user to open the full Properties dialog. */}
-        {detailsOpen && (
-          <DetailsPanel
-            store={store}
-            onOpenProps={(id) => setPropsId(id)}
-            onClose={() => setDetailsOpen(false)}
-          />
-        )}
-      </div>
+                onContextMenu={onRowContext}
+                onRowActivate={onRowActivate}
+                groupBy={store.groupBy}
+                speedHistory={store.getSpeedHistory}
+                sidebarKey={store.sidebarKey}
+                search={store.search}
+              />
+            </div>
+          </main>
+        </div>
       </div>
       <StatusBar store={store} />
 
@@ -599,6 +557,7 @@ export default function App() {
       {queuesOpen && <QueuesPanel store={store} onClose={() => setQueuesOpen(false)} />}
       {historyOpen && <HistoryPanel store={store} onClose={() => setHistoryOpen(false)} />}
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {segmentsId !== null && (
         <IDMSegmentsDialog
           store={store}

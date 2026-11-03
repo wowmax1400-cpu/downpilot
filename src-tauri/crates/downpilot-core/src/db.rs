@@ -485,6 +485,24 @@ impl Db {
         Ok(())
     }
 
+    pub fn update_url(&self, id: i64, new_url: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET url = ?1, error = NULL, error_category = '', updated_at = ?2 WHERE id = ?3",
+            params![new_url, now(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_cookies(&self, id: i64, cookies: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET cookies = ?1, updated_at = ?2 WHERE id = ?3",
+            params![cookies, now(), id],
+        )?;
+        Ok(())
+    }
+
     /// Transaction-bound: persist final progress AND status in one atomic
     /// write. Avoids a torn state where `downloaded` is the canonical
     /// final value but `status` is still `Downloading` (visible to the UI

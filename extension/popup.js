@@ -13,6 +13,8 @@
   const refreshListBtn = document.getElementById("refreshList");
   const chips = Array.from(document.querySelectorAll(".chip"));
 
+  const clearFinishedBtn = document.getElementById("clearFinishedBtn");
+
   let paused = false;
   let connected = false;
   let filter = "active"; // "active" | "all" | "done"
@@ -108,15 +110,27 @@
     c.addEventListener("click", () => {
       filter = c.dataset.filter;
       chips.forEach((x) => x.classList.toggle("active", x === c));
-      render(lastTasks);
+      refreshList();
     });
   });
 
   refreshListBtn.addEventListener("click", () => refreshList());
 
+  if (clearFinishedBtn) {
+    clearFinishedBtn.addEventListener("click", () => {
+      clearFinishedBtn.disabled = true;
+      send("clearTerminal").finally(() => {
+        clearFinishedBtn.disabled = false;
+        refreshList();
+      });
+    });
+  }
+
   // ---- Downloads list ------------------------------------------------------
   function refreshList() {
-    send("getDownloads").then((resp) => {
+    // If ACTIVE tab is selected, query active downloads directly
+    const action = filter.toUpperCase() === "ACTIVE" ? "getActiveDownloads" : "getDownloads";
+    send(action).then((resp) => {
       if (!resp || !resp.ok) {
         setEmpty(connected ? "Failed to load" : "Start DownPilot to see downloads", !connected);
         return;
@@ -158,18 +172,18 @@
   function filterTasks(tasks) {
     // Sort by updated_at desc — most-recent activity first.
     const sorted = tasks.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
-    if (filter === "all") return sorted;
-    if (filter === "done") {
-      return sorted.filter((t) =>
-        t.status === "completed" || t.status === "failed" || t.status === "cancelled"
-      );
-    }
-    // "active" = everything still in flight or resumable.
-    return sorted.filter((t) =>
-      t.status === "downloading" || t.status === "paused" ||
-      t.status === "queued" || t.status === "scheduled" ||
-      t.status === "stopped" || t.status === "failed"
-    );
+    const currentTab = filter.toUpperCase();
+    return sorted.filter((item) => {
+      if (currentTab === "ACTIVE") {
+        // ONLY show transfers actively moving bytes right now
+        return item.status === "downloading" || item.status === "in_progress";
+      }
+      if (currentTab === "DONE") {
+        return item.status === "complete" || item.status === "completed";
+      }
+      // 'ALL' tab shows everything (active, completed, failed, paused)
+      return true;
+    });
   }
 
   function buildRow(t) {
@@ -264,13 +278,20 @@
       actions.appendChild(btn);
     }
 
-    // Cancel / Stop (only for non-terminal)
+    // Cancel / Stop (for active/in-flight) or Dismiss/Remove (for failed/completed/stopped)
     if (canCancel(t)) {
       const btn = document.createElement("button");
       btn.className = "icon-btn danger";
       btn.title = "Cancel";
       btn.textContent = "✕";
       btn.addEventListener("click", () => doAction("cancel", t.id, btn));
+      actions.appendChild(btn);
+    } else if (isTerminal(t)) {
+      const btn = document.createElement("button");
+      btn.className = "icon-btn danger";
+      btn.title = "Remove";
+      btn.textContent = "✕";
+      btn.addEventListener("click", () => doAction("delete", t.id, btn));
       actions.appendChild(btn);
     }
 
@@ -296,7 +317,10 @@
     return t.status === "paused" || t.status === "stopped" || t.status === "failed";
   }
   function canCancel(t) {
-    return t.status !== "completed" && t.status !== "cancelled";
+    return t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed";
+  }
+  function isTerminal(t) {
+    return t.status === "completed" || t.status === "cancelled" || t.status === "failed";
   }
 
   function doAction(action, id, btn) {

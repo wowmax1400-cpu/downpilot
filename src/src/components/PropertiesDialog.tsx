@@ -127,9 +127,11 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
           </button>
         ))}
       </div>
-      <div className="tab-body">
+      <div className="flex flex-col gap-1">
         {tab === "General" && (
-          <dl className="kv">
+          <fieldset className="groupbox">
+            <legend>General</legend>
+            <dl className="kv">
             <Row k="File name" v={task.filename || "(unknown)"} />
             <Row k="Save path" v={task.save_dir} />
             <Row k="Description" v={desc} editable onChange={setDesc} />
@@ -199,83 +201,98 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
             )}
             {task.error && <Row k="Error" v={task.error} />}
           </dl>
+          </fieldset>
         )}
 
         {tab === "Transfer" && (
-          <dl className="kv">
-            <Row k="Current speed" v={task.status === "downloading" ? formatSpeed(task.speed_bps) : "—"} />
-            <Row k="Average speed" v={task.avg_speed_bps > 0 ? formatSpeed(task.avg_speed_bps) : "—"} />
-            <Row k="Peak speed" v={task.peak_speed_bps > 0 ? formatSpeed(task.peak_speed_bps) : "—"} />
-            <Row
-              k="Time remaining"
-              v={task.status === "downloading" && remaining > 0 ? formatEta(remaining, task.speed_bps) : "—"}
-            />
-            <Row k="Time elapsed" v={elapsed != null ? formatDuration(elapsed) : "—"} />
-            <Row k="Connections" v={String(task.threads || 1)} />
-            <Row k="Segments" v={String(task.segments || 0)} />
-            <Row k="Retry count" v={String(task.retry_count)} />
-            <Row k="Resume support" v={task.resume_support ? "Yes" : "No"} />
-          </dl>
+          <fieldset className="groupbox">
+            <legend>Transfer</legend>
+            <dl className="kv">
+              <Row k="Current speed" v={task.status === "downloading" ? formatSpeed(task.speed_bps) : "—"} />
+              <Row k="Average speed" v={task.avg_speed_bps > 0 ? formatSpeed(task.avg_speed_bps) : "—"} />
+              <Row k="Peak speed" v={task.peak_speed_bps > 0 ? formatSpeed(task.peak_speed_bps) : "—"} />
+              <Row
+                k="Time remaining"
+                v={task.status === "downloading" && remaining > 0 ? formatEta(remaining, task.speed_bps) : "—"}
+              />
+              <Row k="Time elapsed" v={elapsed != null ? formatDuration(elapsed) : "—"} />
+              <Row k="Connections" v={String(task.threads || 1)} />
+              <Row k="Segments" v={String(task.segments || 0)} />
+              <Row k="Retry count" v={String(task.retry_count)} />
+              <Row k="Resume support" v={task.resume_support ? "Yes" : "No"} />
+            </dl>
+          </fieldset>
         )}
 
         {tab === "Source" && (
-          <dl className="kv">
-            <Row k="Original URL" v={task.url} />
-            <Row k="Referrer" v={task.referer ?? "—"} />
-            <Row k="Domain" v={domainOf(task.url)} />
-            <Row k="HTTP status" v={task.http_status ? String(task.http_status) : "—"} />
-            <Row k="Content type" v={task.content_type ?? "—"} />
-            <Row k="Webpage URL" v={task.webpage_url ?? "—"} />
-            <Row k="Format" v={task.format_id ?? "—"} />
-          </dl>
+          <fieldset className="groupbox">
+            <legend>Source</legend>
+            <dl className="kv">
+              <Row k="Original URL" v={task.url} />
+              <Row k="Referrer" v={task.referer ?? "—"} />
+              <Row k="Domain" v={domainOf(task.url)} />
+              <Row k="HTTP status" v={task.http_status ? String(task.http_status) : "—"} />
+              <Row k="Content type" v={task.content_type ?? "—"} />
+              <Row k="Webpage URL" v={task.webpage_url ?? "—"} />
+              <Row k="Format" v={task.format_id ?? "—"} />
+            </dl>
+          </fieldset>
         )}
 
         {tab === "Network" && (
-          <dl className="kv">
-            <Row k="Effective proxy" v={effectiveProxy.label} />
-            <div className="kv__row">
-              <dt>Proxy mode</dt>
-              <dd>
-                <select
-                  className="input input--sm"
-                  value={proxyMode}
-                  onChange={(e) => setProxyMode(e.target.value as "inherit" | "direct" | "custom")}
-                >
-                  <option value="inherit">Inherit</option>
-                  <option value="direct">Direct</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </dd>
-            </div>
-            {proxyMode === "custom" && (
-              <Row k="Proxy URL" v={proxyValue} editable onChange={setProxyValue} />
-            )}
-            <Row k="Connection mode" v={task.threads > 1 ? "Segmented" : "Single"} />
-            <Row k="User agent" v={task.user_agent ?? "(default)"} />
-            <Row k="Authentication" v={task.cookies || task.site_id ? "Provided" : "None"} />
-          </dl>
+          <fieldset className="groupbox">
+            <legend>Network</legend>
+            <dl className="kv">
+              <Row k="Effective proxy" v={effectiveProxy.label} />
+              <div className="kv__row">
+                <dt>Proxy mode</dt>
+                <dd>
+                  <select
+                    className="input input--sm"
+                    value={proxyMode}
+                    onChange={(e) => setProxyMode(e.target.value as "inherit" | "direct" | "custom")}
+                  >
+                    <option value="inherit">Inherit</option>
+                    <option value="direct">Direct</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </dd>
+              </div>
+              {proxyMode === "custom" && (
+                <Row k="Proxy URL" v={proxyValue} editable onChange={setProxyValue} />
+              )}
+              <Row k="Connection mode" v={task.threads > 1 ? "Segmented" : "Single"} />
+              <Row k="User agent" v={task.user_agent ?? "(default)"} />
+              <Row k="Authentication" v={task.cookies || task.site_id ? "Provided" : "None"} />
+            </dl>
+          </fieldset>
         )}
 
         {tab === "Timestamps" && (
-          <dl className="kv">
-            <Row k="Added" v={formatDateTime(task.created_at)} />
-            <Row k="Started" v={task.started_at ? formatDateTime(task.started_at) : "—"} />
-            <Row k="Last resumed" v={task.last_resumed_at ? formatDateTime(task.last_resumed_at) : "—"} />
-            <Row k="Completed" v={task.completed_at ? formatDateTime(task.completed_at) : "—"} />
-            <Row k="Last update" v={formatDate(task.updated_at)} />
-          </dl>
+          <fieldset className="groupbox">
+            <legend>Timestamps</legend>
+            <dl className="kv">
+              <Row k="Added" v={formatDateTime(task.created_at)} />
+              <Row k="Started" v={task.started_at ? formatDateTime(task.started_at) : "—"} />
+              <Row k="Last resumed" v={task.last_resumed_at ? formatDateTime(task.last_resumed_at) : "—"} />
+              <Row k="Completed" v={task.completed_at ? formatDateTime(task.completed_at) : "—"} />
+              <Row k="Last update" v={formatDate(task.updated_at)} />
+            </dl>
+          </fieldset>
         )}
 
         {tab === "Advanced" && (
-          <dl className="kv">
-            <Row k="Max connections" v={String(task.threads)} />
-            <Row k="Retry behavior" v={`${task.max_retries} retries, ${task.retry_delay_ms}ms delay`} />
-            <Row k="Conn timeout" v={`${task.conn_timeout_ms} ms`} />
-            <Row k="Read timeout" v={`${task.read_timeout_ms} ms`} />
-            <Row k="Checksum algorithm" v={task.checksum_algorithm || "—"} />
-            <Row k="Checksum" v={task.checksum_value || "—"} />
-            <Row k="Checksum verified" v={task.checksum_verified ? "✓ Yes" : "—"} />
-            <Row k="Error category" v={task.error_category || "—"} />
+          <fieldset className="groupbox">
+            <legend>Advanced</legend>
+            <dl className="kv">
+              <Row k="Max connections" v={String(task.threads)} />
+              <Row k="Retry behavior" v={`${task.max_retries} retries, ${task.retry_delay_ms}ms delay`} />
+              <Row k="Conn timeout" v={`${task.conn_timeout_ms} ms`} />
+              <Row k="Read timeout" v={`${task.read_timeout_ms} ms`} />
+              <Row k="Checksum algorithm" v={task.checksum_algorithm || "—"} />
+              <Row k="Checksum" v={task.checksum_value || "—"} />
+              <Row k="Checksum verified" v={task.checksum_verified ? "✓ Yes" : "—"} />
+              <Row k="Error category" v={task.error_category || "—"} />
             <Row k="Error code" v={task.error_code ? String(task.error_code) : "—"} />
             <Row k="On complete" v={task.on_complete || "(none)"} />
             <Row k="Save path (edit)" v={saveDir} editable onChange={setSaveDir} />
@@ -347,6 +364,7 @@ export function PropertiesDialog({ store, id, onClose }: Props) {
               </dd>
             </div>
           </dl>
+          </fieldset>
         )}
       </div>
     </Dialog>

@@ -727,7 +727,7 @@ impl ChunkDownloader {
         tx: mpsc::UnboundedSender<EngineEvent>,
     ) -> Result<u64, DownloadError> {
         // Compute chunk boundaries based on existing .part sizes (resume).
-        let mut boundaries: Vec<(u64, u64)> = Vec::with_capacity(threads); // (start, end_inclusive)
+        let mut boundaries_vec: Vec<(u64, u64)> = Vec::with_capacity(threads); // (start, end_inclusive)
         let chunk_size = total as u64 / threads as u64;
         let mut cursor = 0u64;
         for i in 0..threads {
@@ -737,10 +737,12 @@ impl ChunkDownloader {
             } else {
                 start + chunk_size - 1
             };
-            boundaries.push((start, end));
+            boundaries_vec.push((start, end));
             cursor = end + 1;
         }
 
+        let boundaries: Arc<std::sync::Mutex<Vec<(u64, u64)>>> =
+            Arc::new(std::sync::Mutex::new(boundaries_vec));
         let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel::<ChunkProgress>();
         let mut tasks = Vec::with_capacity(threads);
         // Validator for If-Range on resumed chunks. `None` on a fresh start
@@ -749,12 +751,10 @@ impl ChunkDownloader {
         let if_range_shared = load_validator(&self.state_dir, task.id).await;
         let state_dir_for_capture = self.state_dir.clone();
 
-        for (i, &(start, end)) in boundaries.iter().enumerate() {
+        for i in 0..threads {
+            let (start, end) = boundaries.lock().unwrap()[i];
             let part_path = part_dir.join(format!("part{i}"));
             let resume = fs::metadata(&part_path).await.map(|m| m.len()).unwrap_or(0);
-            // Build the per-task client (honors `read_timeout_ms` + proxy).
-            // When the task has no read timeout, this returns the shared
-            // `http_client()` clone — cheap, Arc-backed.
             let client = self.client_for(task)?;
             let headers = Self::headers_for(task);
             let auth_header = self.auth_header_for(task);
@@ -770,6 +770,7 @@ impl ChunkDownloader {
             };
             let state_dir = state_dir_for_capture.clone();
             let task_id = task.id;
+            let boundaries_chunk = Arc::clone(&boundaries);
 
             tasks.push(ChunkTask {
                 idx: i,
@@ -798,13 +799,7 @@ impl ChunkDownloader {
                     if status != StatusCode::PARTIAL_CONTENT {
                         return Err(DownloadError::HttpStatus(status.as_u16()));
                     }
-                    // Resume-safety gate: the 206 must start at the exact
-                    // offset this segment asked for, or appending would
-                    // duplicate/skip bytes within the part file.
                     verify_resume_offset(&resp, range_start)?;
-                    // Non-compliant server: honours Range but returns 206 for
-                    // a *changed* object. The bytes would silently corrupt
-                    // the part file — treat it like an ignored range.
                     if let Some(sent) = &if_range {
                         let (etag, lm) = response_validators(&resp);
                         let changed = etag
@@ -815,7 +810,6 @@ impl ChunkDownloader {
                             return Err(DownloadError::RangeIgnored);
                         }
                     }
-                    // Capture the current validator for future resumes.
                     {
                         let (etag, lm) = response_validators(&resp);
                         save_validator(&state_dir, task_id, etag, lm).await;
@@ -825,16 +819,12 @@ impl ChunkDownloader {
                         .append(true)
                         .open(&part_path)
                         .await?;
-                    let expected_seg = resp.content_length().map(|n| n + resume);
                     let mut stream = resp.bytes_stream();
                     let mut done = resume;
                     while let Some(chunk) = stream.next().await {
                         if cancel.load(Ordering::Relaxed) {
                             return Err(DownloadError::Cancelled);
                         }
-                        // Abrupt transport termination mid-segment: map to
-                        // IncompleteBody (retryable transient) instead of a
-                        // raw reqwest error. Part bytes already written stay.
                         let chunk = match chunk {
                             Ok(c) => c,
                             Err(e) if is_abrupt_close_err(&e) => {
@@ -843,36 +833,32 @@ impl ChunkDownloader {
                             Err(e) => return Err(DownloadError::Reqwest(e)),
                         };
                         throttle_write(&mut file, &mut done, &chunk, &speed_limit).await?;
-                        // Cap reported bytes at the segment end so a server that
-                        // ignores Range and re-sends the full file cannot inflate
-                        // the cumulative counter. The excess bytes are already
-                        // written to disk by throttle_write; this only prevents a
-                        // bogus value from propagating to the DB and UI.
-                        let capped = (end.saturating_sub(start) + 1).min(done);
+                        let current_end = boundaries_chunk.lock().unwrap().get(i).map(|b| b.1).unwrap_or(end);
+                        let capped = (current_end.saturating_sub(start) + 1).min(done);
                         chunk_tx.send((i, capped)).ok();
-                    }
-                    file.flush().await?;
-                    // Clean TCP close before the segment was fully served:
-                    // never report success on a short part.
-                    if let Some(expected) = expected_seg {
-                        if done < expected {
-                            return Err(DownloadError::IncompleteBody);
+                        if done >= (current_end.saturating_sub(start) + 1) {
+                            break;
                         }
                     }
+                    file.flush().await?;
                     Ok(())
                 }),
             });
         }
 
         // Progress aggregation loop
-        let task_count = tasks.len();
+        let mut task_count = tasks.len();
         let mut done_per_chunk = vec![0u64; threads];
         let mut total_done: u64 = 0;
         let mut last_emit = std::time::Instant::now();
         let mut first_err: Option<DownloadError> = None;
         let mut finished = 0usize;
         let mut join_handles: Vec<_> = tasks.into_iter().map(|t| (t.idx, t.handle)).collect();
-        drop(chunk_tx);
+
+        // Work-stealing rebalance: if a thread finishes early and another chunk has > 2MB remaining,
+        // split that remaining tail into an extra part file and download it with the free thread.
+        const MIN_REBALANCE_REMAINING: u64 = 2 * 1024 * 1024;
+        let mut active_chunks = threads;
 
         loop {
             // Drain all available progress messages
@@ -890,10 +876,13 @@ impl ChunkDownloader {
                     // Per-chunk snapshot (segment modal). Cheap: bounded by
                     // `threads` (≤ max_threads), only on the same tick as
                     // Progress — no extra wakeups.
-                    let boundaries_ref: &[(u64, u64)] = &boundaries;
                     for (i, &d) in done_per_chunk.iter().enumerate() {
-                        let start = boundaries_ref[i].0;
-                        let end = boundaries_ref[i].1;
+                        let (start, end) = boundaries
+                            .lock()
+                            .unwrap()
+                            .get(i)
+                            .copied()
+                            .unwrap_or((0, 0));
                         let _ = tx.send(EngineEvent::SegmentProgress {
                             id: task.id,
                             idx: i,
@@ -936,6 +925,88 @@ impl ChunkDownloader {
                 break;
             }
 
+            // If some thread finished while others are still running, and we haven't hit max part limit,
+            // check if we can steal the remaining half of the largest chunk.
+            if join_handles.len() < threads && active_chunks < threads * 2 {
+                let mut best_target: Option<(usize, u64)> = None;
+                {
+                    let b = boundaries.lock().unwrap();
+                    for (chunk_idx, &(start, end)) in b.iter().enumerate() {
+                        let done = done_per_chunk.get(chunk_idx).copied().unwrap_or(0);
+                        let seg_len = end.saturating_sub(start) + 1;
+                        let remaining = seg_len.saturating_sub(done);
+                        if remaining >= MIN_REBALANCE_REMAINING {
+                            if let Some((_, best_rem)) = best_target {
+                                if remaining > best_rem {
+                                    best_target = Some((chunk_idx, remaining));
+                                }
+                            } else {
+                                best_target = Some((chunk_idx, remaining));
+                            }
+                        }
+                    }
+                }
+
+                // If candidate found, adjust target's upper bound and spawn stolen child chunk
+                if let Some((target_idx, remaining)) = best_target {
+                    let mut b = boundaries.lock().unwrap();
+                    let orig_end = b[target_idx].1;
+                    let split_size = remaining / 2;
+                    let new_start = orig_end - split_size + 1;
+                    if new_start > b[target_idx].0 && new_start <= orig_end {
+                        b[target_idx].1 = new_start - 1;
+                        let new_idx = b.len();
+                        b.push((new_start, orig_end));
+                        drop(b);
+                        done_per_chunk.push(0);
+
+                        let new_part_path = part_dir.join(format!("part{new_idx}"));
+                        let client = self.client_for(task)?;
+                        let mut h = Self::headers_for(task);
+                        if let Some(auth) = self.auth_header_for(task) {
+                            h.insert(AUTHORIZATION, auth);
+                        }
+                        h.insert(
+                            RANGE,
+                            HeaderValue::from_str(&format!("bytes={new_start}-{orig_end}")).unwrap(),
+                        );
+                        let speed_limit = self.speed_limit.clone();
+                        let cancel_clone = cancel.clone();
+                        let chunk_tx_clone = chunk_tx.clone();
+                        let url = task.url.clone();
+
+                        let handle = tokio::spawn(async move {
+                            let resp = client.get(&url).headers(h).send().await?;
+                            if resp.status() != StatusCode::PARTIAL_CONTENT {
+                                return Err(DownloadError::HttpStatus(resp.status().as_u16()));
+                            }
+                            let mut file = fs::OpenOptions::new()
+                                .create(true)
+                                .write(true)
+                                .truncate(true)
+                                .open(&new_part_path)
+                                .await?;
+                            let mut stream = resp.bytes_stream();
+                            let mut done = 0u64;
+                            while let Some(chunk) = stream.next().await {
+                                if cancel_clone.load(Ordering::Relaxed) {
+                                    return Err(DownloadError::Cancelled);
+                                }
+                                let chunk = chunk.map_err(DownloadError::Reqwest)?;
+                                throttle_write(&mut file, &mut done, &chunk, &speed_limit).await?;
+                                chunk_tx_clone.send((new_idx, done)).ok();
+                            }
+                            file.flush().await?;
+                            Ok(())
+                        });
+
+                        join_handles.push((new_idx, handle));
+                        task_count += 1;
+                        active_chunks += 1;
+                    }
+                }
+            }
+
             // Emit periodic progress and sleep
             let _ = tx.send(EngineEvent::Progress {
                 id: task.id,
@@ -961,8 +1032,17 @@ impl ChunkDownloader {
             return Err(DownloadError::Cancelled);
         }
 
-        // Merge parts in order
-        let merged = merge_parts(part_dir, final_path, threads).await?;
+        // Order segments strictly by byte offset before merging
+        let mut ordered_parts: Vec<(usize, u64)> = boundaries
+            .lock()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(idx, &(start, _))| (idx, start))
+            .collect();
+        ordered_parts.sort_by_key(|&(_, start)| start);
+
+        let merged = merge_parts_in_order(part_dir, final_path, &ordered_parts).await?;
 
         // Optional integrity verification
         if let Some(expected) = &task.expected_sha256 {
@@ -1071,17 +1151,16 @@ async fn throttle_bucket(bytes: u64, speed_limit: &Arc<AtomicU64>) {
     }
     // ~= sleep(bytes / limit) seconds, spread across calls
     let nanos = bytes.saturating_mul(1_000_000_000) / limit.max(1);
-    if nanos > 0 {
+    if nanos >= 1_000_000 {
         tokio::time::sleep(Duration::from_nanos(nanos)).await;
     }
 }
 
-async fn merge_parts(
+async fn merge_parts_in_order(
     part_dir: &Path,
     final_path: &Path,
-    threads: usize,
+    ordered_parts: &[(usize, u64)],
 ) -> Result<u64, DownloadError> {
-    eprintln!("[merge_parts] part_dir={:?} threads={}", part_dir, threads);
     let mut out = fs::OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -1089,10 +1168,13 @@ async fn merge_parts(
         .open(final_path)
         .await?;
     let mut total = 0u64;
-    for i in 0..threads {
-        let part_path = part_dir.join(format!("part{i}"));
+    for &(part_idx, _) in ordered_parts {
+        let part_path = part_dir.join(format!("part{part_idx}"));
         if !part_path.exists() {
-            continue;
+            return Err(DownloadError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("missing download part: part{part_idx}"),
+            )));
         }
         let mut part = fs::File::open(&part_path).await?;
         let mut buf = [0u8; 512 * 1024];

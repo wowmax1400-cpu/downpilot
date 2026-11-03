@@ -13,24 +13,24 @@ export interface ThemeDef {
 export const THEMES: ThemeDef[] = [
   {
     id: "deep-midnight",
-    name: "Deep Midnight",
-    blurb: "OLED black · battery-friendly",
-    accent: "#7c5cff",
-    swatch: "#000000",
+    name: "Deep Midnight (macOS Dark)",
+    blurb: "Cyber neon midnight palette",
+    accent: "#06b6d4",
+    swatch: "#0a0f1d",
+  },
+  {
+    id: "classic-idm",
+    name: "Classic IDM (Light)",
+    blurb: "Authentic Win32 IDM paper white",
+    accent: "#0284c7",
+    swatch: "#f0f0f0",
   },
   {
     id: "modern-dark",
-    name: "Modern Dark",
+    name: "Modern Dark (Navy)",
     blurb: "Soft slate · easy on the eyes",
-    accent: "#3b82f6",
-    swatch: "#171b22",
-  },
-  {
-    id: "clean-light",
-    name: "Clean Light",
-    blurb: "Paper white · daylight",
-    accent: "#4f46e5",
-    swatch: "#ffffff",
+    accent: "#38bdf8",
+    swatch: "#0f172a",
   },
   {
     id: "cyberpunk",
@@ -63,9 +63,11 @@ export function hexToRgba(hex: string, alpha: number): string {
 /** Apply a theme id + optional accent hex to the document. */
 export function applyTheme(themeId: string, accent?: string) {
   const root = document.documentElement;
-  root.dataset.theme = themeId;
-  const theme = THEMES.find((t) => t.id === themeId);
-  const color = accent || theme?.accent || "#7c5cff";
-  root.style.setProperty("--accent-custom", color);
-  root.style.setProperty("--accent-custom-soft", hexToRgba(color, 0.16));
+  const tid = themeId || "deep-midnight";
+  root.dataset.theme = tid;
+  if (tid === "classic-idm") {
+    root.style.colorScheme = "light";
+  } else {
+    root.style.colorScheme = "dark";
+  }
 }

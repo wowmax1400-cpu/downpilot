@@ -152,6 +152,16 @@ description = "Allow retrying all failed downloads"
 commands.allow = ["retry_all"]
 
 [[permission]]
+identifier = "allow-update-download-url"
+description = "Allow updating download address for refresh"
+commands.allow = ["update_download_url"]
+
+[[permission]]
+identifier = "allow-update-download-cookies"
+description = "Allow updating download session cookies"
+commands.allow = ["update_download_cookies"]
+
+[[permission]]
 identifier = "allow-redownload"
 description = "Allow re-downloading a file"
 commands.allow = ["redownload"]
@@ -251,6 +261,8 @@ permissions = [
   "allow-pause-all",
   "allow-stop-all",
   "allow-retry-all",
+  "allow-update-download-url",
+  "allow-update-download-cookies",
   "allow-redownload",
   "allow-move-to-queue",
   "allow-set-category",

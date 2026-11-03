@@ -90,9 +90,9 @@ export function CategoriesSection({ store }: { store: DownloadsStore }) {
                         className="side-row__dot"
                         style={{ background: c.color ?? "#64748b" }}
                       />
-                      <span>{dispLabel}</span>
+                      <span style={{ marginRight: 6 }}>{dispLabel}</span>
                       {c.builtin && <span className="cat-badge">built-in</span>}
-                   </div>
+                    </div>
                     <div className="cat-grid__ext" title={extList}>
                       {extList}
                    </div>
@@ -668,291 +668,298 @@ export function CaptureSection({ store }: { store: DownloadsStore }) {
   );
 }
 
+const TABS = [
+  'General',
+  'File Types',
+  'Connection',
+  'Save To',
+  'Downloads',
+  'Proxy',
+  'Site Logins',
+] as const;
+
+type OptionTab = (typeof TABS)[number];
+
 export function SettingsDialog({ store, onClose }: Props) {
-  const [search, setSearch] = React.useState("");
-  const [active, setActive] = React.useState("general");
+  const [activeTab, setActiveTab] = React.useState<OptionTab>('General');
   const s = store.settings;
 
   const setStr = (key: string, value: string) => store.updateSetting(key, value);
 
-  const baseSections: Array<{ id: string; title: string; fields: Array<{ key: string; label: string; type: string; options?: string[]; hint?: string }> }> = [
-    {
-      id: "general",
-      title: "General",
-      fields: [
-        { key: "download_dir", label: "Default download folder", type: "text" },
-        {
-          key: "theme",
-          label: "Theme",
-          type: "select",
-          options: ["deep-midnight", "modern-dark", "clean-light", "cyberpunk"],
-        },
-        { key: "accent", label: "Accent color", type: "text" },
-      ],
-    },
-    {
-      id: "downloads",
-      title: "Downloads",
-      fields: [
-        { key: "default_threads", label: "Default connections per download", type: "number" },
-        { key: "max_threads", label: "Max connections per download", type: "number" },
-        { key: "max_simultaneous", label: "Max simultaneous downloads", type: "number" },
-        { key: "speed_limit_kbps", label: "Global speed limit (kbps, 0=unlimited)", type: "number" },
-      ],
-    },
-    {
-      id: "connections",
-      title: "Connections",
-      fields: [
-        { key: "conn_timeout_ms", label: "Connection timeout (ms)", type: "number" },
-        { key: "read_timeout_ms", label: "Read timeout (ms)", type: "number" },
-        { key: "max_retries", label: "Max retries", type: "number" },
-        { key: "retry_delay_ms", label: "Retry delay (ms)", type: "number" },
-      ],
-    },
-    {
-      id: "proxy",
-      title: "Proxy",
-      fields: [
-        {
-          key: "proxy_url",
-          label: "Proxy URL (http/https/socks5)",
-          type: "text",
-          hint: "Blank = no proxy",
-        },
-      ],
-    },
-    {
-      id: "browser",
-      title: "Browser Integration",
-      fields: [
-        {
-          key: "auto_intercept",
-          label: "Automatically capture browser downloads",
-          type: "toggle",
-        },
-        {
-          key: "use_ytdlp_for_media",
-          label: "Use yt-dlp for media links",
-          type: "toggle",
-        },
-      ],
-    },
-    {
-      id: "clipboard",
-      title: "Clipboard",
-      fields: [
-        {
-          key: "clipboard_monitor",
-          label: "Monitor clipboard for download URLs",
-          type: "toggle",
-        },
-      ],
-    },
-    {
-      id: "completion",
-      title: "Completion Actions",
-      fields: [
-        {
-          key: "on_complete",
-          label: "Default action",
-          type: "select",
-          // Destructive actions (Shutdown / Suspend / Hibernate) require
-          // an extra "dangerous_actions" toggle in the same dialog; the
-          // engine refuses to run them otherwise.
-          options: [
-            "none",
-            "open_file",
-            "open_folder",
-            "notification",
-            "play_sound",
-            "run_command",
-            "start_queue",
-            "stop_queue",
-            "shutdown",
-            "suspend",
-            "hibernate",
-          ],
-        },
-        {
-          key: "dangerous_actions",
-          label:
-            "Allow Shutdown / Suspend / Hibernate on completion (highly destructive)",
-          type: "toggle",
-        },
-      ],
-    },
-    {
-      id: "notifications",
-      title: "Notifications",
-      fields: [
-        { key: "schedule_enabled", label: "Enable scheduled windows", type: "toggle" },
-        { key: "schedule_start", label: "Schedule start (HH:MM)", type: "text" },
-        { key: "schedule_end", label: "Schedule end (HH:MM)", type: "text" },
-      ],
-    },
-  ];
-
-  const matches = (sec: { id: string; title: string }) =>
-    !search ||
-    sec.title.toLowerCase().includes(search.toLowerCase()) ||
-    sec.id.includes(search.toLowerCase());
-
-  const visibleSections = baseSections.filter(matches);
-  const categoriesMatch = matches({ id: "categories", title: "Categories" });
-  const showCategories = categoriesMatch;
-  const schedulesMatch = matches({ id: "schedules", title: "Schedules & Bandwidth Profiles" });
-  const showSchedules = schedulesMatch;
-  const captureMatch = matches({ id: "capture", title: "Browser Capture" });
-  const showCapture = captureMatch;
-  const sitesMatch = matches({ id: "sites", title: "Site Rules" });
-  const showSites = sitesMatch;
-  const showAnyBase = visibleSections.length > 0;
-
   return (
-    <Dialog
-      title="Options"
-      onClose={onClose}
-      width={760}
-      footer={<Btn variant="primary" onClick={onClose}>Close</Btn>}
-    >
-      <div className="settings">
-        <div className="settings__side">
-          <input
-            className="input input--search"
-            placeholder="Search settings..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <div className="settings__nav">
-            {visibleSections.map((sec) => (
-              <button
-                key={sec.id}
-                className={
-                  "settings__nav-item " + (active === sec.id ? "active" : "")
-                }
-                onClick={() => setActive(sec.id)}
-              >
-                {sec.title}
-             </button>
-            ))}
-            {showCategories && (
-              <button
-                className={
-                  "settings__nav-item " + (active === "categories" ? "active" : "")
-                }
-                onClick={() => setActive("categories")}
-              >
-                Categories
-             </button>
-            )}
-            {showSchedules && (
-              <button
-                className={
-                  "settings__nav-item " + (active === "schedules" ? "active" : "")
-                }
-                onClick={() => setActive("schedules")}
-              >
-                Schedules
-              </button>
-            )}
-            {showCapture && (
-              <button
-                className={
-                  "settings__nav-item " + (active === "capture" ? "active" : "")
-                }
-                onClick={() => setActive("capture")}
-              >
-                Browser Capture
-              </button>
-            )}
-            {showSites && (
-              <button
-                className={
-                  "settings__nav-item " + (active === "sites" ? "active" : "")
-                }
-                onClick={() => setActive("sites")}
-              >
-                Site Rules
-              </button>
-            )}
-         </div>
-       </div>
-        <div className="settings__main">
-          {visibleSections
-            .filter((sec) => !search || active === sec.id)
-            .map((sec) => (
-              <div key={sec.id} className="settings__section">
-                <h3 className="settings__h">{sec.title}</h3>
-                <div className="form">
-                  {sec.fields.map((f) => {
-                    const raw = (s as unknown as Record<string, unknown>)?.[f.key];
-                    const val = raw == null ? "" : String(raw);
-                    return (
-                      <Field key={f.key} label={f.label} hint={f.hint}>
-                        {f.type === "toggle" ? (
-                          <input
-                            type="checkbox"
-                            checked={val === "true" || val === "1"}
-                            onChange={(e) =>
-                              setStr(f.key, e.target.checked ? "true" : "false")
-                            }
-                          />
-                        ) : f.type === "select" ? (
-                          <select
-                            className="select"
-                            value={val}
-                            onChange={(e) => setStr(f.key, e.target.value)}
-                          >
-                            {f.options!.map((o) => (
-                              <option key={o} value={o}>
-                                {o}
-                             </option>
-                            ))}
-                         </select>
-                        ) : f.type === "number" ? (
-                          <input
-                            type="number"
-                            className="input"
-                            value={val}
-                            onChange={(e) => setStr(f.key, e.target.value)}
-                          />
-                        ) : (
-                          <input
-                            className="input"
-                            value={val}
-                            onChange={(e) => setStr(f.key, e.target.value)}
-                          />
-                        )}
-                     </Field>
-                    );
-                  })}
-               </div>
-             </div>
-            ))}
-          {showCategories && (active === "categories" || search) && (
-            <div className="settings__section">
-              <h3 className="settings__h">Categories</h3>
-              <CategoriesSection store={store} />
-           </div>
+    <div className="modal-overlay" onMouseDown={onClose}>
+      <div
+        className="options-dialog"
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+      >
+        {/* Header */}
+        <div className="dialog-titlebar">
+          <span>Options</span>
+          <button onClick={onClose} className="close-btn" title="Close">✕</button>
+        </div>
+
+        {/* Tab Strip */}
+        <div style={{ display: 'flex', gap: '2px', borderBottom: '1px solid #D0D0D0', background: '#ECE9D8', padding: '4px 6px 0', overflowX: 'auto' }}>
+          {TABS.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: '4px 10px',
+                fontSize: '11px',
+                border: '1px solid #C0C0C0',
+                borderBottom: activeTab === tab ? '1px solid #FFF' : 'none',
+                background: activeTab === tab ? '#FFFFFF' : '#E0E0E0',
+                fontWeight: activeTab === tab ? 'bold' : 'normal',
+                cursor: 'pointer',
+                marginBottom: activeTab === tab ? '-1px' : '0',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab Content Panels */}
+        <div style={{ padding: '12px', background: '#FFFFFF', minHeight: '280px', maxHeight: '60vh', overflowY: 'auto' }}>
+          {activeTab === 'General' && (
+            <>
+              <fieldset className="group-box">
+                <legend>General Settings</legend>
+                <label style={{ display: 'block', marginBottom: 4 }}>Default download folder:</label>
+                <div className="path-row">
+                  <input
+                    type="text"
+                    className="input"
+                    value={s?.download_dir ?? '/home/user/Downloads'}
+                    onChange={(e) => setStr('download_dir', e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="win-btn"
+                    onClick={() => {
+                      const p = prompt('Enter download directory path:', s?.download_dir ?? '');
+                      if (p != null && p.trim()) setStr('download_dir', p.trim());
+                    }}
+                  >
+                    Browse...
+                  </button>
+                </div>
+              </fieldset>
+
+              <fieldset className="group-box">
+                <legend>UI & Integration</legend>
+                <div className="grid-form">
+                  <label>Appearance Theme:</label>
+                  <select
+                    className="select"
+                    value={s?.theme ?? 'classic-idm'}
+                    onChange={(e) => setStr('theme', e.target.value)}
+                  >
+                    <option value="classic-idm">Classic IDM</option>
+                    <option value="deep-midnight">Deep Midnight</option>
+                    <option value="modern-dark">Modern Dark</option>
+                    <option value="cyberpunk">Cyberpunk</option>
+                  </select>
+
+                  <label>Browser Capture:</label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(s?.auto_intercept)}
+                      onChange={(e) => setStr('auto_intercept', e.target.checked ? 'true' : 'false')}
+                    />
+                    <span>Automatically capture browser downloads</span>
+                  </label>
+
+                  <label>Clipboard Monitor:</label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(s?.clipboard_monitor)}
+                      onChange={(e) => setStr('clipboard_monitor', e.target.checked ? 'true' : 'false')}
+                    />
+                    <span>Monitor clipboard for download URLs</span>
+                  </label>
+                </div>
+              </fieldset>
+            </>
           )}
-          {showCapture && (active === "capture" || search) && (
-            <div className="settings__section">
-              <h3 className="settings__h">Browser Capture</h3>
+
+          {activeTab === 'File Types' && (
+            <fieldset className="group-box">
+              <legend>Browser Capture & File Types</legend>
               <CaptureSection store={store} />
-            </div>
+            </fieldset>
           )}
-          {showSites && (active === "sites" || search) && (
-            <div className="settings__section">
-              <h3 className="settings__h">Site Rules</h3>
+
+          {activeTab === 'Connection' && (
+            <>
+              <fieldset className="group-box">
+                <legend>Connection Limits</legend>
+                <div className="grid-form">
+                  <label>Max connections per download:</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.max_threads ?? 8}
+                    min={1}
+                    max={32}
+                    onChange={(e) => setStr('max_threads', e.target.value)}
+                  />
+                  <label>Default connections per download:</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.default_threads ?? 8}
+                    min={1}
+                    max={32}
+                    onChange={(e) => setStr('default_threads', e.target.value)}
+                  />
+                  <label>Max simultaneous downloads:</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.max_simultaneous ?? 4}
+                    min={1}
+                    max={10}
+                    onChange={(e) => setStr('max_simultaneous', e.target.value)}
+                  />
+                  <label>Global speed limit (kbps, 0=unlimited):</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.speed_limit_kbps ?? 0}
+                    min={0}
+                    onChange={(e) => setStr('speed_limit_kbps', e.target.value)}
+                  />
+                </div>
+              </fieldset>
+
+              <fieldset className="group-box">
+                <legend>Network Timeouts</legend>
+                <div className="grid-form">
+                  <label>Connection timeout (ms):</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.conn_timeout_ms ?? 15000}
+                    onChange={(e) => setStr('conn_timeout_ms', e.target.value)}
+                  />
+                  <label>Read timeout (ms):</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.read_timeout_ms ?? 30000}
+                    onChange={(e) => setStr('read_timeout_ms', e.target.value)}
+                  />
+                  <label>Max retries:</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={s?.max_retries ?? 5}
+                    onChange={(e) => setStr('max_retries', e.target.value)}
+                  />
+                </div>
+              </fieldset>
+            </>
+          )}
+
+          {activeTab === 'Save To' && (
+            <fieldset className="group-box">
+              <legend>Categories & Save Folders</legend>
+              <CategoriesSection store={store} />
+            </fieldset>
+          )}
+
+          {activeTab === 'Downloads' && (
+            <>
+              <fieldset className="group-box">
+                <legend>Completion Actions</legend>
+                <div className="grid-form">
+                  <label>On complete action:</label>
+                  <select
+                    className="select"
+                    value={s?.on_complete ?? 'none'}
+                    onChange={(e) => setStr('on_complete', e.target.value)}
+                  >
+                    {[
+                      'none',
+                      'open_file',
+                      'open_folder',
+                      'notification',
+                      'play_sound',
+                      'run_command',
+                      'start_queue',
+                      'stop_queue',
+                      'shutdown',
+                      'suspend',
+                      'hibernate',
+                      'disconnect_net',
+                      'disconnect_vpn',
+                    ].map((act) => (
+                      <option key={act} value={act}>
+                        {act}
+                      </option>
+                    ))}
+                  </select>
+
+                  <label>Media handling:</label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(s?.use_ytdlp_for_media)}
+                      onChange={(e) =>
+                        setStr('use_ytdlp_for_media', e.target.checked ? 'true' : 'false')
+                      }
+                    />
+                    <span>Use yt-dlp for media links</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset className="group-box">
+                <legend>Scheduler</legend>
+                <SchedulesSection store={store} />
+              </fieldset>
+            </>
+          )}
+
+          {activeTab === 'Proxy' && (
+            <fieldset className="group-box">
+              <legend>Manual Proxy Configuration</legend>
+              <div className="grid-form">
+                <label>Proxy URL (http/socks5):</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="http://127.0.0.1:8080 (blank = direct)"
+                  value={s?.proxy_url ?? ''}
+                  onChange={(e) => setStr('proxy_url', e.target.value)}
+                />
+              </div>
+            </fieldset>
+          )}
+
+          {activeTab === 'Site Logins' && (
+            <fieldset className="group-box">
+              <legend>Site Rules & Authentication</legend>
               <SiteRulesSection store={store} />
-            </div>
+            </fieldset>
           )}
-          {!showAnyBase && !showCategories && !showCapture && !showSites && (
-            <div className="panel__empty">No settings match</div>
-          )}
-       </div>
-     </div>
-   </Dialog>
+        </div>
+
+        {/* Footer Action Buttons */}
+        <div className="dialog-footer">
+          <button type="button" onClick={onClose} className="win-btn">OK</button>
+          <button type="button" onClick={onClose} className="win-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
   );
 }
+
+export const OptionsModal = SettingsDialog;

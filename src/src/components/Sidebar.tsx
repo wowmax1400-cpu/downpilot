@@ -82,15 +82,9 @@ function queueLabel(name: string, label?: string): string {
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg
-      viewBox="0 0 16 16"
-      className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90 text-txt-dim" : "text-txt-faint"}`}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
-      <path d="M6 4l4.5 4L6 12" />
-    </svg>
+    <span className="inline-flex h-3 w-3 items-center justify-center text-[10px] leading-none text-gray-500 hover:text-[#0078D7] mr-1 cursor-pointer select-none">
+      {open ? "▼" : "▶"}
+    </span>
   );
 }
 
@@ -160,7 +154,7 @@ export function Sidebar({
     <button
       type="button"
       onClick={() => toggle(id)}
-      className="flex w-full items-center gap-1 rounded-none px-1 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-gray-500 hover:bg-[var(--row-hover)] hover:text-gray-300"
+      className="flex w-full items-center gap-1 px-1 py-[2px] text-[10px] font-bold uppercase tracking-wider text-black hover:bg-[#e8f0fe]"
     >
       <Chevron open={!!open[id]} />
       {title}
@@ -171,71 +165,86 @@ export function Sidebar({
   const TreeRow = ({
     k,
     label,
-    count,
     icon,
     title,
     depth = 0,
+    hasToggle = false,
+    isOpen = false,
+    onToggle,
   }: {
     k: SidebarKey;
     label: string;
-    count?: number;
     icon: React.ReactNode;
     title?: string;
     depth?: number;
+    hasToggle?: boolean;
+    isOpen?: boolean;
+    onToggle?: () => void;
   }) => {
     const activeHere = isActive(k);
     return (
-      <button
-        type="button"
-        onClick={() => onSelect(k)}
-        title={title}
-        className={
-          "flex w-full items-center rounded-none py-[3px] pr-1.5 text-left text-xs transition-colors " +
-          (activeHere
-            ? "bg-accent-soft text-accent"
-            : "text-txt-dim hover:bg-[var(--row-hover)] hover:text-txt")
-        }
-        style={{ paddingLeft: `${6 + depth * 14}px` }}
-      >
-        {iconWrap(icon)}
-        <span className="flex-1 truncate">{label}</span>
-        {typeof count === "number" && (
-          <span
+      <div className={depth > 0 ? "tree-node" : "relative pl-0 leading-5"}>
+        <div className="flex items-center">
+          {hasToggle ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggle?.();
+              }}
+              className="inline-flex h-3.5 w-3.5 items-center justify-center text-[10px] leading-none text-gray-500 hover:text-[#0078D7] mr-1 cursor-pointer shrink-0 z-10"
+            >
+              {isOpen ? "▼" : "▶"}
+            </button>
+          ) : depth === 0 ? (
+            <span className="w-3.5 shrink-0 mr-1" />
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onSelect(k)}
+            title={title}
             className={
-              "ml-2 inline-flex min-w-[1.25rem] justify-end font-mono text-[10.5px] tabular-nums " +
-              (activeHere ? "text-accent" : "text-txt-faint")
+              "flex flex-1 items-center gap-1.5 px-2 py-1 text-left select-none sidebar-row-btn min-w-0 transition-colors " +
+              (activeHere
+                ? "sidebar-selected-win32 font-medium"
+                : "text-[var(--text)] hover:bg-[var(--row-hover)]")
             }
           >
-            {count}
-          </span>
-        )}
-      </button>
+            {iconWrap(icon)}
+            <span className="truncate">{label}</span>
+          </button>
+        </div>
+      </div>
     );
   };
 
   return (
-    <aside className="flex w-[216px] shrink-0 flex-col overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)]">
-      {/* ▼ 📁 All Downloads + nested file-type categories */}
-        <div className="flex flex-col gap-0 px-1.5 pb-0.5">
-        <SectionHeader id="categories" title="Categories" />
+    <aside className="flex w-[210px] shrink-0 flex-col overflow-y-auto bg-[var(--bg-sidebar)] select-none border-r border-[var(--line)]">
+      <div className="flex h-[26px] items-center border-b border-[var(--line)] bg-[var(--table-header-bg)] px-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+        <span>Categories</span>
+      </div>
+
+      <div className="flex flex-col gap-0 px-1 py-1 bg-[var(--bg-sidebar)] text-[12px]">
+        {/* [-] All Downloads */}
+        <TreeRow
+          k={{ kind: "all" }}
+          label="All Downloads"
+          hasToggle
+          isOpen={!!open.categories}
+          onToggle={() => toggle("categories")}
+          icon={
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-amber-500" fill="currentColor">
+              <path d="M1.5 3A1.5 1.5 0 0 0 0 4.5v7A1.5 1.5 0 0 0 1.5 13h13a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 14.5 5H7.707L6.354 3.646A.5.5 0 0 0 6 3.5H1.5z" />
+            </svg>
+          }
+        />
         {open.categories && (
-          <>
-            <TreeRow
-              k={{ kind: "all" }}
-              label="All Downloads"
-              count={counts["all"] ?? 0}
-              icon={
-                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-sky-300" fill="none" stroke="currentColor" strokeWidth="1.4">
-                  <path d="M1.5 4.5A1.5 1.5 0 013 3h3l1.5 1.5H13A1.5 1.5 0 0114.5 6v6A1.5 1.5 0 0113 13.5H3A1.5 1.5 0 011.5 12V4.5z" />
-                </svg>
-              }
-            />
+          <div className="relative ml-1">
             {orderedCategories.map((c) => (
               <TreeRow
                 key={"cat-" + c.name}
                 k={{ kind: "category", value: c.name }}
                 label={c.label || c.name}
-                count={counts[`cat:${c.name}`] ?? 0}
                 depth={1}
                 icon={<CategoryIcon name={c.name} category={c.name} />}
                 title={
@@ -244,61 +253,90 @@ export function Sidebar({
                 }
               />
             ))}
-          </>
+          </div>
         )}
-      </div>
 
-      {/* ▼ ⏱ Queues */}
-      <div className="flex flex-col gap-0 px-1.5 pb-0.5">
-        <SectionHeader id="queues" title="Queues" />
-        {open.queues &&
-          (queues.length === 0 ? (
-            <div className="py-1 pl-7 text-xs text-txt-faint">No queues yet</div>
-          ) : (
-            queues.map((q) => {
-              const s = queueStats[q.name] ?? { active: 0, queued: 0, total: 0 };
+        {/* [+] Unfinished */}
+        <TreeRow
+          k={{ kind: "status", value: "unfinished" }}
+          label="Unfinished"
+          hasToggle
+          isOpen={!!open.unfinished}
+          onToggle={() => toggle("unfinished")}
+          icon={
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-amber-600" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="6" />
+              <path d="M6.2 6.2a1.9 1.9 0 113.1 1.4c-.6.45-1.3.75-1.3 1.6M8 11.5v.02" />
+            </svg>
+          }
+        />
+
+        {/* [+] Finished */}
+        <TreeRow
+          k={{ kind: "status", value: "finished" }}
+          label="Finished"
+          hasToggle
+          isOpen={false}
+          onToggle={() => onSelect({ kind: "status", value: "finished" })}
+          icon={
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="8" cy="8" r="6" />
+              <path d="M5 8.5l2 2 4-4" />
+            </svg>
+          }
+        />
+
+        {/* [+] Grabber projects */}
+        <TreeRow
+          k={{ kind: "site", value: "" }}
+          label="Grabber projects"
+          hasToggle
+          isOpen={false}
+          onToggle={() => {}}
+          icon={
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-sky-600" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="8" cy="8" r="6" />
+              <ellipse cx="8" cy="8" rx="3" ry="6" />
+              <line x1="2" y1="8" x2="14" y2="8" />
+            </svg>
+          }
+        />
+
+        {/* [+] Queues */}
+        <TreeRow
+          k={{ kind: "queue", value: "general" }}
+          label="Queues"
+          hasToggle
+          isOpen={!!open.queues}
+          onToggle={() => toggle("queues")}
+          icon={
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-gray-600" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="8" cy="8" r="6" />
+              <path d="M8 4.5V8l2.5 1.5" />
+            </svg>
+          }
+        />
+        {open.queues && (
+          <div className="relative ml-1">
+            {queues.map((q) => {
               const label = queueLabel(q.name, q.label);
-              // 🟢 while the queue has live transfers, 🕒 when idle.
-              const dot =
-                s.active > 0 ? (
-                  <span className="inline-block h-1.5 w-1.5 rounded-[1px] bg-emerald-500" />
-                ) : (
-                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-txt-faint" fill="none" stroke="currentColor" strokeWidth="1.4">
-                    <circle cx="8" cy="8" r="6" />
-                    <path d="M8 4.5V8l2.5 1.5" />
-                  </svg>
-                );
               return (
                 <TreeRow
                   key={"q-" + q.name}
                   k={{ kind: "queue", value: q.name }}
                   label={label}
-                  count={s.total}
                   depth={1}
-                  icon={dot}
-                  title={`${label} · ${s.active} active / ${q.max_simultaneous} max · ${s.queued} queued`}
+                  icon={
+                    <svg viewBox="0 0 16 16" className="h-3 w-3 text-amber-500" fill="none" stroke="currentColor" strokeWidth="1.4">
+                      <circle cx="8" cy="8" r="6" />
+                      <path d="M8 4.5V8l2 1" />
+                    </svg>
+                  }
+                  title={label}
                 />
               );
-            })
-          ))}
-      </div>
-
-      {/* ▼ ❓ Unfinished */}
-      <div className="flex flex-col gap-0 px-1.5 pb-1">
-        <SectionHeader id="unfinished" title="Unfinished" />
-        {open.unfinished && (
-          <TreeRow
-            k={{ kind: "status", value: "unfinished" }}
-            label="Unfinished"
-            count={counts["unfinished"] ?? 0}
-            icon={
-              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-amber-300/90" fill="none" stroke="currentColor" strokeWidth="1.4">
-                <circle cx="8" cy="8" r="6" />
-                <path d="M6.2 6.2a1.9 1.9 0 113.1 1.4c-.6.45-1.3.75-1.3 1.6M8 11.5v.02" />
-              </svg>
-            }
-            title="Downloads that have not finished yet (any non-complete state)"
-          />
+            })}
+          </div>
         )}
       </div>
     </aside>

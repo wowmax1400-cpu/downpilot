@@ -508,6 +508,16 @@ export function useDownloads() {
     },
     []
   );
+  const updateDownloadUrl = useCallback(async (id: number, newUrl: string) => {
+    await api.updateDownloadUrl(id, newUrl);
+    await refresh();
+  }, [refresh]);
+
+  const updateDownloadCookies = useCallback(async (id: number, cookies: string) => {
+    await api.updateDownloadCookies(id, cookies);
+    await refresh();
+  }, [refresh]);
+
   const redownload = useCallback((id: number) => api.redownload(id), []);
   const moveToQueue = useCallback(
     (id: number, q: string) => api.moveToQueue(id, q),
@@ -903,7 +913,7 @@ export function useDownloads() {
     return { activeSpeed, activeCount, queuedCount, remaining };
   }, [tasks]);
 
-  const version = "1.0.0"; // matches CARGO_PKG_VERSION (tauri.conf 1.0.0)
+  const version = "2.0.0"; // matches DownPilot v2.0.0
 
   return {
     tasks,
@@ -960,6 +970,8 @@ export function useDownloads() {
     resume,
     cancel,
     remove,
+    updateDownloadUrl,
+    updateDownloadCookies,
     redownload,
     resumeAll: () => api.resumeAll(),
     pauseAll: () => api.pauseAll(),
