@@ -1572,6 +1572,21 @@ impl DownloadManager {
                     body: e,
                 });
             }
+
+            // Antivirus / Security Scanner integration
+            if let Some(cmd) = self.settings().antivirus_cmd.filter(|s| !s.trim().is_empty()) {
+                if let Some(t) = self.db.get(id).unwrap_or(None) {
+                    let file_path = Path::new(&t.save_dir).join(&t.filename);
+                    if file_path.exists() {
+                        let path_str = file_path.to_string_lossy().to_string();
+                        let scan_cmd = format!("{cmd} \"{path_str}\"");
+                        let _ = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg(scan_cmd)
+                            .spawn();
+                    }
+                }
+            }
         }
         if let Some(task) = self.db.get(id).unwrap_or(None) {
             let _ = self
@@ -1725,8 +1740,9 @@ impl DownloadManager {
         }
         match q.on_complete.as_str() {
             "shutdown" => {
-                let _ = std::process::Command::new("systemctl")
-                    .args(["poweroff"])
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("notify-send 'DownPilot' 'Download complete. System shutting down in 30 seconds... Run: shutdown -c to abort.' -u critical; shutdown -h +1 || systemctl poweroff")
                     .spawn();
             }
             "suspend" => {
@@ -1966,8 +1982,9 @@ impl DownloadManager {
                 }
             }
             "shutdown" => {
-                let _ = std::process::Command::new("systemctl")
-                    .args(["poweroff"])
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("notify-send 'DownPilot' 'Download complete. System shutting down in 30 seconds... Run: shutdown -c to abort.' -u critical; shutdown -h +1 || systemctl poweroff")
                     .spawn();
             }
             "suspend" => {
@@ -3035,6 +3052,67 @@ impl DownloadManager {
     /// type detection via `<meta http-equiv="content-type">` is
     /// included when present in the HTML; full HEAD probing is the
     /// UI's job (batched, off the main grabber path).
+    /// Inspect a remote ZIP file via HTTP Range request on its central directory.
+    /// Allows peeking files inside without downloading the full archive.
+    pub async fn preview_remote_zip(
+        self: &Arc<Self>,
+        url: &str,
+    ) -> Result<Vec<crate::models::ZipEntryInfo>, String> {
+        let client = self.downloader.http_client();
+        let resp = client
+            .head(url)
+            .send()
+            .await
+            .map_err(|e| format!("HEAD request failed: {e}"))?;
+        let total = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| "Content-Length not reported by server".to_string())?;
+
+        if total < 22 {
+            return Err("File too small to be a valid ZIP".into());
+        }
+
+        // Fetch last 64 KB to locate End of Central Directory (EOCD)
+        let tail_bytes = 65536u64.min(total);
+        let start_range = total - tail_bytes;
+        let resp = client
+            .get(url)
+            .header("Range", format!("bytes={start_range}-{}", total - 1))
+            .send()
+            .await
+            .map_err(|e| format!("Range request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Server returned HTTP {}", resp.status()));
+        }
+
+        let body = resp.bytes().await.map_err(|e| e.to_string())?;
+        let mut entries = Vec::new();
+
+        // Scan for central directory file header signature: 0x02014b50 (PK\x01\x02)
+        for i in 0..body.len().saturating_sub(46) {
+            if &body[i..i + 4] == b"PK\x01\x02" {
+                let comp_size = u32::from_le_bytes(body[i + 20..i + 24].try_into().unwrap_or([0; 4])) as u64;
+                let uncomp_size = u32::from_le_bytes(body[i + 24..i + 28].try_into().unwrap_or([0; 4])) as u64;
+                let name_len = u16::from_le_bytes(body[i + 28..i + 30].try_into().unwrap_or([0; 2])) as usize;
+                if i + 46 + name_len <= body.len() {
+                    let name = String::from_utf8_lossy(&body[i + 46..i + 46 + name_len]).to_string();
+                    let is_dir = name.ends_with('/');
+                    entries.push(crate::models::ZipEntryInfo {
+                        name,
+                        compressed_size: comp_size,
+                        uncompressed_size: uncomp_size,
+                        is_dir,
+                    });
+                }
+            }
+        }
+        Ok(entries)
+    }
+
     pub async fn grab_site_with_rules(
         self: &Arc<Self>,
         page_url: &str,

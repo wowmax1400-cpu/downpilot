@@ -164,6 +164,14 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
 /// `GrabRules::sensible_defaults()`. The UI passes the user's
 /// configured rules so the same dialog is consistent across calls.
 #[tauri::command]
+async fn preview_remote_zip(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<Vec<downpilot_core::models::ZipEntryInfo>, String> {
+    state.manager.preview_remote_zip(&url).await
+}
+
+#[tauri::command]
 async fn grab_site(
     state: State<'_, AppState>,
     url: String,
@@ -1622,6 +1630,7 @@ pub fn run() {
             get_default_dir,
             open_in_file_manager,
             open_file,
+            preview_remote_zip,
             grab_site,
             list_queues,
             create_queue,

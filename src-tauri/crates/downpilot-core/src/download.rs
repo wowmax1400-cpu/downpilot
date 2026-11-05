@@ -762,7 +762,17 @@ impl ChunkDownloader {
             let cancel = cancel.clone();
             let chunk_tx = chunk_tx.clone();
             let range_start = start + resume;
-            let url = task.url.clone();
+            // Rotate across available mirrors per chunk to multiply throughput
+            let url = if !task.mirrors.is_empty() {
+                let mirror_idx = i % (task.mirrors.len() + 1);
+                if mirror_idx == 0 {
+                    task.url.clone()
+                } else {
+                    task.mirrors[mirror_idx - 1].clone()
+                }
+            } else {
+                task.url.clone()
+            };
             let if_range = if resume > 0 {
                 if_range_shared.clone()
             } else {
@@ -973,7 +983,16 @@ impl ChunkDownloader {
                         let speed_limit = self.speed_limit.clone();
                         let cancel_clone = cancel.clone();
                         let chunk_tx_clone = chunk_tx.clone();
-                        let url = task.url.clone();
+                        let url = if !task.mirrors.is_empty() {
+                            let mirror_idx = new_idx % (task.mirrors.len() + 1);
+                            if mirror_idx == 0 {
+                                task.url.clone()
+                            } else {
+                                task.mirrors[mirror_idx - 1].clone()
+                            }
+                        } else {
+                            task.url.clone()
+                        };
 
                         let handle = tokio::spawn(async move {
                             let resp = client.get(&url).headers(h).send().await?;

@@ -192,26 +192,26 @@ export function Sidebar({
                 e.stopPropagation();
                 onToggle?.();
               }}
-              className="inline-flex h-3.5 w-3.5 items-center justify-center text-[10px] leading-none text-gray-500 hover:text-[#0078D7] mr-1 cursor-pointer shrink-0 z-10"
+              className="inline-flex h-4 w-4 items-center justify-center text-[10px] leading-none text-slate-400 hover:text-cyan-400 mr-1 cursor-pointer shrink-0 z-10"
             >
               {isOpen ? "▼" : "▶"}
             </button>
           ) : depth === 0 ? (
-            <span className="w-3.5 shrink-0 mr-1" />
+            <span className="w-4 shrink-0 mr-1" />
           ) : null}
           <button
             type="button"
             onClick={() => onSelect(k)}
             title={title}
             className={
-              "flex flex-1 items-center gap-1.5 px-2 py-1 text-left select-none sidebar-row-btn min-w-0 transition-colors " +
+              "flex flex-1 items-center gap-2 px-2.5 py-1.5 text-left select-none sidebar-row-btn min-w-0 transition-all " +
               (activeHere
-                ? "sidebar-selected-win32 font-medium"
-                : "text-[var(--text)] hover:bg-[var(--row-hover)]")
+                ? "sidebar-selected-win32 font-semibold"
+                : "text-slate-300 hover:bg-[#131d33] hover:text-white")
             }
           >
             {iconWrap(icon)}
-            <span className="truncate">{label}</span>
+            <span className="truncate tracking-tight">{label}</span>
           </button>
         </div>
       </div>
@@ -219,12 +219,12 @@ export function Sidebar({
   };
 
   return (
-    <aside className="flex w-[210px] shrink-0 flex-col overflow-y-auto bg-[var(--bg-sidebar)] select-none border-r border-[var(--line)]">
-      <div className="flex h-[26px] items-center border-b border-[var(--line)] bg-[var(--table-header-bg)] px-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+    <aside className="flex w-[215px] shrink-0 flex-col overflow-y-auto bg-[var(--bg-sidebar)] select-none border-r border-[#162032] shadow-[2px_0_10px_rgba(0,0,0,0.2)]">
+      <div className="flex h-[28px] items-center border-b border-[#162032] bg-[#080c16] px-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">
         <span>Categories</span>
       </div>
 
-      <div className="flex flex-col gap-0 px-1 py-1 bg-[var(--bg-sidebar)] text-[12px]">
+      <div className="flex flex-col gap-0.5 px-1.5 py-1.5 bg-[var(--bg-sidebar)] text-[12px]">
         {/* [-] All Downloads */}
         <TreeRow
           k={{ kind: "all" }}

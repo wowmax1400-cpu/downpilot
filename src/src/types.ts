@@ -259,6 +259,7 @@ export interface AppSettings {
   auto_intercept: boolean | null;
   use_ytdlp_for_media: boolean | null;
   clipboard_monitor: boolean | null;
+  antivirus_cmd?: string | null;
   proxy_url: string | null;
   schedule_enabled: boolean | null;
   schedule_start: string | null;

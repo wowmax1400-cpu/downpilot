@@ -176,6 +176,15 @@ impl CompletionAction {
     }
 }
 
+/// An entry within a remote ZIP archive inspected without full download.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZipEntryInfo {
+    pub name: String,
+    pub uncompressed_size: u64,
+    pub compressed_size: u64,
+    pub is_dir: bool,
+}
+
 /// A download task as stored in SQLite and shown in the UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
@@ -546,6 +555,9 @@ pub struct AppSettings {
     /// unless this is true. Default-false so a fresh install cannot
     /// accidentally power off the user's machine.
     pub dangerous_actions: Option<bool>,
+    /// Optional virus scan / antivirus command to run on completed files.
+    /// E.g. "clamscan --no-summary" or custom script path. Receives file path as last argument.
+    pub antivirus_cmd: Option<String>,
 }
 
 /// A download queue.

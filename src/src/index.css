@@ -1,15 +1,15 @@
 /* ===================== THEME DEFINITIONS ===================== */
 
 :root, html[data-theme="deep-midnight"], html:not([data-theme="classic-idm"]) {
-  --bg: #0a0f1d;
-  --bg-sidebar: #090d16;
-  --bg-toolbar: #0c1222;
+  --bg: #070b14;
+  --bg-sidebar: #080c16;
+  --bg-toolbar: #0a0f1d;
   --surface: #0e1526;
   --surface-2: #141c30;
   --surface-3: #1a253e;
   --surface-4: #22304e;
-  --line: #1e293b;
-  --line-soft: #162032;
+  --line: #162032;
+  --line-soft: #121a2b;
   --text: #ffffff;
   --text-dim: #94a3b8;
   --text-faint: #64748b;
@@ -27,22 +27,23 @@
   --danger-bg: rgba(239, 68, 68, 0.12);
   --danger-border: rgba(239, 68, 68, 0.35);
   --info: #38bdf8;
-  --table-bg: #0d1322;
-  --table-header-bg: #090e1a;
+  --table-bg: #0b101f;
+  --table-header-bg: #080c16;
   --table-header-text: #94a3b8;
-  --row-alt: #0a0f1c;
-  --row-hover: #131c30;
-  --row-selected: rgba(59, 130, 246, 0.22);
-  --row-selected-border: #3b82f6;
-  --sidebar-active-bg: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(6, 182, 212, 0.18));
-  --sidebar-active-border: #a855f7;
-  --sidebar-active-glow: 0 0 10px rgba(168, 85, 247, 0.35);
+  --row-alt: #0d1424;
+  --row-hover: #131d33;
+  --row-selected: rgba(56, 189, 248, 0.22);
+  --row-selected-border: #38bdf8;
+  --row-selected-glow: inset 0 0 10px rgba(56, 189, 248, 0.25);
+  --sidebar-active-bg: linear-gradient(135deg, rgba(168, 85, 247, 0.28), rgba(6, 182, 212, 0.2));
+  --sidebar-active-border: #c084fc;
+  --sidebar-active-glow: 0 0 12px rgba(168, 85, 247, 0.45), inset 0 0 8px rgba(6, 182, 212, 0.2);
   --btn-hover: #1a253d;
   --btn-active: #223150;
   --modal-bg: #0e1526;
-  --modal-header: #090e1a;
-  --modal-border: #1e293b;
-  --progress-track: #151e32;
+  --modal-header: #080c16;
+  --modal-border: #162032;
+  --progress-track: #141c30;
   --progress-fill: linear-gradient(90deg, #06b6d4, #a855f7);
   --radius: 6px;
   --radius-sm: 4px;
@@ -176,6 +177,7 @@ th, .table-header th, .column-header, .dtable thead th, .table-header-cell {
   background-color: var(--row-selected) !important;
   border-top: 1px solid var(--row-selected-border) !important;
   border-bottom: 1px solid var(--row-selected-border) !important;
+  box-shadow: var(--row-selected-glow) !important;
 }
 
 .col-transfer-rate { min-width: 100px !important; width: 100px !important; }
@@ -194,13 +196,14 @@ th, .table-header th, .column-header, .dtable thead th, .table-header-cell {
 }
 
 .sidebar-row-btn {
-  border-radius: var(--radius-sm) !important;
+  border-radius: 6px !important;
 }
 .sidebar-selected-win32 {
-  background: var(--sidebar-active-bg) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--sidebar-active-border) !important;
-  box-shadow: var(--sidebar-active-glow) !important;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.28), rgba(6, 182, 212, 0.2)) !important;
+  color: #FFFFFF !important;
+  border: 1px solid #c084fc !important;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.45), inset 0 0 8px rgba(6, 182, 212, 0.2) !important;
+  font-weight: 600 !important;
 }
 
 /* Modern status pills */
@@ -208,26 +211,30 @@ th, .table-header th, .column-header, .dtable thead th, .table-header-cell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 7px;
-  font-size: 10.5px;
-  font-weight: 600;
-  border-radius: 4px;
-  line-height: 1.2;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 9999px;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .pill-badge--complete {
-  background: var(--success-bg);
-  border: 1px solid var(--success-border);
-  color: var(--success);
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid #10b981;
+  color: #34d399;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
 }
 .pill-badge--error {
-  background: var(--danger-bg);
-  border: 1px solid var(--danger-border);
-  color: var(--danger);
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid #ef4444;
+  color: #f87171;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.25);
 }
 .pill-badge--warning {
-  background: var(--warning-bg);
-  border: 1px solid var(--warning-border);
-  color: var(--warning);
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid #f59e0b;
+  color: #fbbf24;
 }
 
 @tailwind base;

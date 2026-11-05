@@ -303,6 +303,7 @@ export async function getSettings(): Promise<AppSettings> {
     auto_intercept: false,
     use_ytdlp_for_media: true,
     clipboard_monitor: false,
+    antivirus_cmd: "",
     proxy_url: null,
     schedule_enabled: false,
     schedule_start: "23:00",
@@ -352,6 +353,17 @@ export async function analyzeUrl(
     best_formats: [],
     default_filename: "sample.mp4",
   }));
+}
+
+export interface ZipEntryInfo {
+  name: string;
+  uncompressed_size: number;
+  compressed_size: number;
+  is_dir: boolean;
+}
+
+export async function previewRemoteZip(url: string): Promise<ZipEntryInfo[]> {
+  return invoke("preview_remote_zip", { url });
 }
 
 export async function grabSite(url: string, limit?: number): Promise<GrabbedLink[]> {

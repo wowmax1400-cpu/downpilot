@@ -27,30 +27,30 @@ export function StatusBar({ store }: { store: DownloadsStore }) {
   const cap = (store.settings?.speed_limit_kbps ?? 0) > 0
     ? (store.settings!.speed_limit_kbps as number) * 1024
     : 0;
-  const pane = "px-2 text-[11px] text-[var(--text-dim)] h-[22px] flex items-center select-none bg-[var(--surface)] border border-[var(--line)] rounded-[3px]";
-  const num = "ml-1 font-mono tabular-nums text-[var(--text)] font-medium";
+  const pane = "px-2.5 text-[11px] text-[var(--text-dim)] h-[22px] flex items-center select-none bg-[var(--surface)] border border-[var(--line)] rounded-[4px] shadow-sm";
+  const num = "ml-1.5 font-mono tabular-nums text-white font-semibold";
 
   return (
-    <div className="flex h-[28px] shrink-0 items-center border-t border-[var(--line)] bg-[var(--bg-toolbar)] px-2 text-[11px] gap-2 select-none relative">
+    <div className="flex h-[30px] shrink-0 items-center border-t border-[var(--line)] bg-[var(--bg-toolbar)] px-2.5 text-[11px] gap-2 select-none relative shadow-[0_-2px_10px_rgba(0,0,0,0.3)]">
       {/* Glowing neon progress line across top of status bar */}
-      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 opacity-80" />
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_8px_rgba(6,182,212,0.8)] opacity-90" />
 
       {/* Pane 1: Total / Active / Paused */}
       <div className={`${pane} min-w-[210px]`} title="Download state counters">
         <span>Total:</span>
         <span className={num}>{c.all ?? 0}</span>
-        <span className="mx-1.5 text-gray-500">|</span>
+        <span className="mx-2 text-gray-600">|</span>
         <span>Active:</span>
         <span className={num}>{s.activeCount}</span>
-        <span className="mx-1.5 text-gray-500">|</span>
+        <span className="mx-2 text-gray-600">|</span>
         <span>Paused:</span>
         <span className={num}>{c.paused ?? 0}</span>
       </div>
 
       {/* Pane 2: Remaining bytes */}
       <div className={`${pane} min-w-[150px]`} title="Total remaining bytes">
-        <span className="font-mono">{formatBytes(s.remaining)}</span>
-        <span className="text-gray-400 ml-1">remaining</span>
+        <span className="font-mono text-cyan-300 font-medium">{formatBytes(s.remaining)}</span>
+        <span className="text-gray-400 ml-1.5">remaining</span>
       </div>
 
       {/* Spacer to push right panes */}
@@ -59,15 +59,15 @@ export function StatusBar({ store }: { store: DownloadsStore }) {
       {/* Pane 3: Speed & Limit Cap */}
       <div className={`${pane} min-w-[170px]`} title="Download Speed and Bandwidth Limit">
         <span>Speed:</span>
-        <span className={num}>{formatSpeed(s.activeSpeed)}</span>
-        <span className="mx-1.5 text-gray-500">|</span>
+        <span className={`${num} text-emerald-400`}>{formatSpeed(s.activeSpeed)}</span>
+        <span className="mx-2 text-gray-600">|</span>
         <span>Cap:</span>
         <span className={num}>{cap > 0 ? formatSpeed(cap) : "Off"}</span>
       </div>
 
       {/* Pane 4: App version */}
-      <div className={`${pane} min-w-[110px] justify-center`}>
-        <span className="font-mono text-cyan-400 font-semibold">DownPilot v2.0.0</span>
+      <div className={`${pane} min-w-[120px] justify-center bg-gradient-to-r from-[rgba(6,182,212,0.1)] to-[rgba(168,85,247,0.1)] border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.2)]`}>
+        <span className="font-mono text-cyan-400 font-bold tracking-wide">DownPilot v2.0.0</span>
       </div>
     </div>
   );

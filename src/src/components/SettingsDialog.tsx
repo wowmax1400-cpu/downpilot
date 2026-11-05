@@ -765,6 +765,15 @@ export function SettingsDialog({ store, onClose }: Props) {
                     <option value="cyberpunk">Cyberpunk</option>
                   </select>
 
+                  <label>Antivirus Scanner:</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. clamscan --no-summary"
+                    value={s?.antivirus_cmd ?? ''}
+                    onChange={(e) => setStr('antivirus_cmd', e.target.value)}
+                  />
+
                   <label>Browser Capture:</label>
                   <label className="check">
                     <input

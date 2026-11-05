@@ -1118,6 +1118,7 @@ impl Db {
                 "exclude_domains" => s.exclude_domains = Some(v),
                 "allowed_extensions" => s.allowed_extensions = Some(v),
                 "always_allow_extensions" => s.always_allow_extensions = Some(v),
+                "antivirus_cmd" => s.antivirus_cmd = Some(v),
                 "capture_mode" => s.capture_mode = Some(v),
                 _ => {}
             }

@@ -65,16 +65,19 @@ function Btn({ icon, label, onClick, disabled, variant = "default", title }: Btn
       }}
       onMouseDown={() => !disabled && setPressed(true)}
       onMouseUp={() => setPressed(false)}
-      className="toolbar-btn inline-flex flex-col items-center justify-center min-w-[54px] px-1.5 h-[48px] select-none transition-all shrink-0 rounded-[4px] disabled:cursor-not-allowed disabled:opacity-30"
+      className="toolbar-btn inline-flex flex-col items-center justify-center min-w-[58px] px-2 h-[48px] select-none transition-all shrink-0 rounded-[6px] disabled:cursor-not-allowed disabled:opacity-25"
       style={{
-        background: hovered && !disabled ? (pressed ? "var(--btn-active)" : "var(--btn-hover)") : "transparent",
+        background: hovered && !disabled
+          ? (pressed ? "rgba(255, 255, 255, 0.12)" : "rgba(255, 255, 255, 0.06)")
+          : "transparent",
         border: hovered && !disabled
-          ? "1px solid var(--line)"
+          ? "1px solid rgba(255, 255, 255, 0.15)"
           : "1px solid transparent",
+        boxShadow: hovered && !disabled ? "0 2px 8px rgba(0,0,0,0.3)" : "none",
       }}
     >
-      <span className="inline-flex h-[28px] w-[28px] items-center justify-center pointer-events-none drop-shadow-sm">{icon}</span>
-      <span className="whitespace-nowrap text-[11px] leading-tight font-medium text-[var(--text)] mt-[2px] px-0.5 pointer-events-none">{label}</span>
+      <span className="inline-flex h-[28px] w-[28px] items-center justify-center pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]">{icon}</span>
+      <span className="whitespace-nowrap text-[11px] leading-tight font-medium text-[var(--text)] mt-[3px] px-0.5 pointer-events-none tracking-tight">{label}</span>
     </button>
   );
 }
@@ -103,8 +106,8 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
   const completedTasks = store.tasks.filter((t) => t.status === "completed");
 
   return (
-    <div className="toolbar flex h-[54px] shrink-0 items-center border-b border-[#E5E5E5] bg-[#F8F9FA] px-1 select-none overflow-x-auto flex-nowrap" style={{ overflowX: "auto", flexWrap: "nowrap" }}>
-      <div className="flex min-w-max h-full items-center gap-[2px] overflow-x-auto flex-nowrap" style={{ overflowX: "auto", flexWrap: "nowrap" }}>
+    <div className="toolbar flex h-[58px] shrink-0 items-center border-b border-[var(--line)] bg-[var(--bg-toolbar)] px-2 select-none overflow-x-auto flex-nowrap" style={{ overflowX: "auto", flexWrap: "nowrap" }}>
+      <div className="flex min-w-max h-full items-center gap-1.5 overflow-x-auto flex-nowrap" style={{ overflowX: "auto", flexWrap: "nowrap" }}>
         {/* Group 1: Add URL, Resume, Stop, Stop All */}
         <Btn
           icon={<IdmIconAdd size={32} />}

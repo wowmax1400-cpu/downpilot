@@ -62,6 +62,11 @@ description = "Allow opening a downloaded file with the OS default handler"
 commands.allow = ["open_file"]
 
 [[permission]]
+identifier = "allow-preview-remote-zip"
+description = "Allow previewing entries of a remote zip file"
+commands.allow = ["preview_remote_zip"]
+
+[[permission]]
 identifier = "allow-grab-site"
 description = "Allow grabbing downloadable links from a page"
 commands.allow = ["grab_site"]
@@ -243,6 +248,7 @@ permissions = [
   "allow-get-default-dir",
   "allow-open-in-file-manager",
   "allow-open-file",
+  "allow-preview-remote-zip",
   "allow-grab-site",
   "allow-list-queues",
   "allow-create-queue",

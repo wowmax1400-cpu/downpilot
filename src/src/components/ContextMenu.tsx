@@ -7,6 +7,8 @@
 
 import React from "react";
 import type { DownloadsStore } from "../store/useDownloads";
+import * as api from "../lib/api";
+import { formatBytes } from "../lib/format";
 import {
   IconStart,
   IconPause,
@@ -218,6 +220,28 @@ export function ContextMenu(props: Props) {
             }
           }}
           disabled={!single}
+        />
+        <Item
+          label="Preview ZIP Contents…"
+          icon={<IconProperties size={13} />}
+          onClick={async () => {
+            if (!single) return;
+            try {
+              const entries = await api.previewRemoteZip(single.url);
+              if (entries.length === 0) {
+                window.alert("No entries found or file is not a standard ZIP archive.");
+              } else {
+                const list = entries
+                  .slice(0, 30)
+                  .map((e: api.ZipEntryInfo) => `${e.name} (${formatBytes(e.uncompressed_size)})`)
+                  .join("\n");
+                window.alert(`Archive Contents (${entries.length} items):\n\n${list}${entries.length > 30 ? "\n..." : ""}`);
+              }
+            } catch (e) {
+              window.alert("Cannot preview ZIP archive: " + e);
+            }
+          }}
+          disabled={!single || !single.url.toLowerCase().includes(".zip")}
         />
         <Item
           label="Update Session Cookies…"

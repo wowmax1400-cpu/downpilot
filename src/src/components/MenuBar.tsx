@@ -250,10 +250,10 @@ export function MenuBar(props: Props) {
     <div
       ref={barRef}
       data-tauri-drag-region="false"
-      className="menubar menu-bar flex h-[26px] shrink-0 items-center border-b border-[var(--line)] bg-[var(--bg-toolbar)] px-1.5 select-none text-[var(--text)] relative z-50"
+      className="menubar menu-bar flex h-[26px] shrink-0 items-center border-b border-[var(--line)] bg-[var(--bg-toolbar)] px-2 select-none text-[var(--text)] relative z-50 backdrop-blur-md"
       style={{ WebkitAppRegion: "no-drag" } as unknown as React.CSSProperties}
     >
-      <ul className="flex items-center list-none m-0 p-0 gap-0 text-[12px]">
+      <ul className="flex items-center list-none m-0 p-0 gap-1 text-[12px]">
         {menuKeys.map((key) => {
           const menu = menuDefinitions[key];
           const isOpen = activeMenu === key;
