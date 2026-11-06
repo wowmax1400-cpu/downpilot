@@ -183,7 +183,7 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
 
         <Sep />
 
-        {/* Group 5: Grabber, Tell a Friend */}
+        {/* Group 5: Grabber, Tell a Friend, Theme Selector */}
         <Btn
           icon={<IdmIconGrabber size={32} />}
           label="Grabber"
@@ -195,6 +195,22 @@ export function Toolbar({ store, onAction }: ToolbarProps) {
           onClick={() => onAction("tellAFriend")}
           title="Tell a Friend / About"
         />
+        <Sep />
+        {/* Quick Theme Switcher */}
+        <div className="flex flex-col items-center justify-center px-1.5 h-[48px] shrink-0">
+          <span className="text-[10px] text-[var(--text-dim)] font-medium mb-1">Theme</span>
+          <select
+            className="select"
+            style={{ height: 22, fontSize: 11, minWidth: 105, padding: "1px 4px" }}
+            value={store.settings?.theme ?? "deep-midnight"}
+            onChange={(e) => store.updateSetting("theme", e.target.value)}
+          >
+            <option value="deep-midnight">Deep Midnight</option>
+            <option value="classic-idm">Classic IDM</option>
+            <option value="modern-dark">Modern Dark</option>
+            <option value="cyberpunk">Cyberpunk</option>
+          </select>
+        </div>
       </div>
     </div>
   );

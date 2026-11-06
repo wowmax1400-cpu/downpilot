@@ -207,7 +207,7 @@ export function Sidebar({
               "flex flex-1 items-center gap-2 px-2.5 py-1.5 text-left select-none sidebar-row-btn min-w-0 transition-all " +
               (activeHere
                 ? "sidebar-selected-win32 font-semibold"
-                : "text-slate-300 hover:bg-[#131d33] hover:text-white")
+                : "text-[var(--text)] hover:bg-[var(--row-hover)]")
             }
           >
             {iconWrap(icon)}
@@ -219,8 +219,8 @@ export function Sidebar({
   };
 
   return (
-    <aside className="flex w-[215px] shrink-0 flex-col overflow-y-auto bg-[var(--bg-sidebar)] select-none border-r border-[#162032] shadow-[2px_0_10px_rgba(0,0,0,0.2)]">
-      <div className="flex h-[28px] items-center border-b border-[#162032] bg-[#080c16] px-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+    <aside className="flex w-[215px] shrink-0 flex-col overflow-y-auto bg-[var(--bg-sidebar)] select-none border-r border-[var(--line)] shadow-[2px_0_10px_rgba(0,0,0,0.2)]">
+      <div className="flex h-[28px] items-center border-b border-[var(--line)] bg-[var(--table-header-bg)] px-3 text-[11px] font-bold uppercase tracking-wider text-[var(--text-dim)]">
         <span>Categories</span>
       </div>
 

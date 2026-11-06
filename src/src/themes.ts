@@ -70,4 +70,9 @@ export function applyTheme(themeId: string, accent?: string) {
   } else {
     root.style.colorScheme = "dark";
   }
+  if (accent) {
+    root.style.setProperty("--accent", accent);
+  } else {
+    root.style.removeProperty("--accent");
+  }
 }

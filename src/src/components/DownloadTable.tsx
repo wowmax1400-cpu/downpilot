@@ -470,13 +470,13 @@ function Row({
   const numCell = "text-right font-mono text-[11px] tabular-nums text-[var(--text-dim)]";
   const dim = "text-[11px] text-[var(--text-dim)]";
 
-  const rowBg = index % 2 === 1 ? "bg-[#0b101f]" : "bg-[#0d1424]";
+  const rowBg = index % 2 === 1 ? "bg-[var(--row-alt)]" : "bg-[var(--table-bg)]";
 
   return (
     <div
       className={
-        `group relative grid cursor-default items-center gap-x-0 border-b border-[#162032] ${rowBg} px-0 py-0 h-[28px] text-[12px] select-none transition-colors ` +
-        (selected ? "!bg-[rgba(56,189,248,0.22)] !border-y !border-sky-400 text-white shadow-[inset_0_0_8px_rgba(56,189,248,0.2)]" : "text-[var(--text)] hover:bg-[#131d33]")
+        `group relative grid cursor-default items-center gap-x-0 border-b border-[var(--line-soft)] ${rowBg} px-0 py-0 h-[28px] text-[12px] select-none transition-colors ` +
+        (selected ? "!bg-[var(--row-selected)] !border-y !border-[var(--row-selected-border)] text-[var(--text)] shadow-[var(--row-selected-glow)]" : "text-[var(--text)] hover:bg-[var(--row-hover)]")
       }
       style={{
         gridTemplateColumns: gridTemplate(widths, visible),
