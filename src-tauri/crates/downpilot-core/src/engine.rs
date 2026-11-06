@@ -1255,7 +1255,14 @@ impl DownloadManager {
                         .find(|q| q.name == task.queue)
                         .and_then(|q| (!q.proxy_url.is_empty()).then_some(q.proxy_url))
                 })
-                .or_else(|| self.settings().proxy_url)
+                .or_else(|| {
+                    let s = self.settings();
+                    if s.proxy_enabled.unwrap_or(true) {
+                        s.proxy_url
+                    } else {
+                        None
+                    }
+                })
         };
         let effective = candidate.or_else(|| Some(String::new()));
         if let Some(proxy) = effective.as_deref().filter(|p| !p.is_empty()) {
@@ -3031,7 +3038,8 @@ impl DownloadManager {
         referer: Option<&str>,
         user_agent: Option<&str>,
     ) -> Result<crate::models::MediaInfo, String> {
-        let proxy = self.settings().proxy_url;
+        let s = self.settings();
+        let proxy = if s.proxy_enabled.unwrap_or(true) { s.proxy_url } else { None };
         ytdlp::YtDlp::probe(
             url,
             &crate::models::ProbeOptions {

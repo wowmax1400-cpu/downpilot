@@ -1481,6 +1481,7 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
                     "allowed_extensions": (s.allowed_extensions.clone().unwrap_or_default()),
                     "always_allow_extensions": (s.always_allow_extensions.clone().unwrap_or_default()),
                     "proxy_url": (s.proxy_url.clone().unwrap_or_default()),
+                    "proxy_enabled": s.proxy_enabled.unwrap_or(false),
                 })),
                 error: None,
                 _req_id: req_id,

@@ -522,6 +522,7 @@ pub struct AppSettings {
     pub use_ytdlp_for_media: Option<bool>,
     pub clipboard_monitor: Option<bool>,
     pub proxy_url: Option<String>,
+    pub proxy_enabled: Option<bool>,
     pub schedule_enabled: Option<bool>,
     pub schedule_start: Option<String>,
     pub schedule_end: Option<String>,

@@ -261,6 +261,7 @@ export interface AppSettings {
   clipboard_monitor: boolean | null;
   antivirus_cmd?: string | null;
   proxy_url: string | null;
+  proxy_enabled?: boolean | null;
   schedule_enabled: boolean | null;
   schedule_start: string | null;
   schedule_end: string | null;

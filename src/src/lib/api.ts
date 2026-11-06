@@ -305,6 +305,7 @@ export async function getSettings(): Promise<AppSettings> {
     clipboard_monitor: false,
     antivirus_cmd: "",
     proxy_url: null,
+    proxy_enabled: false,
     schedule_enabled: false,
     schedule_start: "23:00",
     schedule_end: "06:00",

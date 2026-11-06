@@ -1106,6 +1106,7 @@ impl Db {
                 "use_ytdlp_for_media" => s.use_ytdlp_for_media = Some(v == "true"),
                 "clipboard_monitor" => s.clipboard_monitor = Some(v == "true"),
                 "proxy_url" => s.proxy_url = Some(v),
+                "proxy_enabled" => s.proxy_enabled = Some(v == "true"),
                 "schedule_enabled" => s.schedule_enabled = Some(v == "true"),
                 "schedule_start" => s.schedule_start = Some(v),
                 "schedule_end" => s.schedule_end = Some(v),

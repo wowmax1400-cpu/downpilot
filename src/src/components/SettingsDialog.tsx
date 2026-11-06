@@ -939,17 +939,79 @@ export function SettingsDialog({ store, onClose }: Props) {
 
           {activeTab === 'Proxy' && (
             <fieldset className="group-box">
-              <legend>Manual Proxy Configuration</legend>
+              <legend>Proxy / VPN Gateway Settings</legend>
               <div className="grid-form">
-                <label>Proxy URL (http/socks5):</label>
+                <label>Use Proxy Server:</label>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(s?.proxy_enabled)}
+                    onChange={(e) => setStr('proxy_enabled', e.target.checked ? 'true' : 'false')}
+                  />
+                  <span>Route downloads through proxy</span>
+                </label>
+
+                <label>Proxy Address:</label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="http://127.0.0.1:8080 (blank = direct)"
+                  placeholder="e.g. http://127.0.0.1:10808 or socks5://127.0.0.1:10808"
                   value={s?.proxy_url ?? ''}
                   onChange={(e) => setStr('proxy_url', e.target.value)}
                 />
+
+                <label>Quick Presets:</label>
+                <div className="flex gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    className="win-btn"
+                    style={{ minWidth: 65, height: 22, fontSize: 10 }}
+                    onClick={() => {
+                      setStr('proxy_url', 'http://127.0.0.1:10809');
+                      setStr('proxy_enabled', 'true');
+                    }}
+                  >
+                    v2rayN HTTP (10809)
+                  </button>
+                  <button
+                    type="button"
+                    className="win-btn"
+                    style={{ minWidth: 65, height: 22, fontSize: 10 }}
+                    onClick={() => {
+                      setStr('proxy_url', 'socks5://127.0.0.1:10808');
+                      setStr('proxy_enabled', 'true');
+                    }}
+                  >
+                    v2rayN SOCKS (10808)
+                  </button>
+                  <button
+                    type="button"
+                    className="win-btn"
+                    style={{ minWidth: 65, height: 22, fontSize: 10 }}
+                    onClick={() => {
+                      setStr('proxy_url', 'http://127.0.0.1:8080');
+                      setStr('proxy_enabled', 'true');
+                    }}
+                  >
+                    Local 8080
+                  </button>
+                  <button
+                    type="button"
+                    className="win-btn"
+                    style={{ minWidth: 50, height: 22, fontSize: 10 }}
+                    onClick={() => {
+                      setStr('proxy_url', '');
+                      setStr('proxy_enabled', 'false');
+                    }}
+                  >
+                    Direct (None)
+                  </button>
+                </div>
               </div>
+              <p className="settings__hint" style={{ marginTop: 12 }}>
+                Supports <code>http://</code>, <code>https://</code>, and <code>socks5://</code> protocols.
+                Applies globally to chunk downloads, browser interception, and media link analyzer.
+              </p>
             </fieldset>
           )}
 
