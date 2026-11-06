@@ -1309,13 +1309,70 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<DownloadTask> {
         })
 }
 
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+pub fn extension_from_content_type(ct: &str) -> Option<&'static str> {
+    let clean = ct.split(';').next().unwrap_or(ct).trim().to_ascii_lowercase();
+    match clean.as_str() {
+        "video/mp4" => Some(".mp4"),
+        "video/x-matroska" => Some(".mkv"),
+        "video/webm" => Some(".webm"),
+        "video/x-msvideo" => Some(".avi"),
+        "video/quicktime" => Some(".mov"),
+        "application/zip" | "application/x-zip-compressed" => Some(".zip"),
+        "application/x-rar-compressed" | "application/vnd.rar" => Some(".rar"),
+        "application/x-7z-compressed" => Some(".7z"),
+        "application/x-tar" => Some(".tar"),
+        "application/gzip" | "application/x-gzip" => Some(".tar.gz"),
+        "application/pdf" => Some(".pdf"),
+        "audio/mpeg" | "audio/mp3" => Some(".mp3"),
+        "audio/flac" | "audio/x-flac" => Some(".flac"),
+        "audio/wav" | "audio/x-wav" => Some(".wav"),
+        "audio/ogg" => Some(".ogg"),
+        "image/png" => Some(".png"),
+        "image/jpeg" => Some(".jpg"),
+        "image/gif" => Some(".gif"),
+        "image/webp" => Some(".webp"),
+        "application/vnd.android.package-archive" => Some(".apk"),
+        "application/x-iso9660-image" => Some(".iso"),
+        "application/x-msdos-program" | "application/x-msdownload" => Some(".exe"),
+        _ => None,
+    }
+}
+
 pub fn guess_filename(url: &str) -> String {
     let path = url.split(['?', '#']).next().unwrap_or(url);
-    let name = path.rsplit('/').next().unwrap_or("download");
+    let raw_name = path.rsplit('/').next().unwrap_or("download");
+    let name = percent_decode(raw_name).trim().to_string();
     if name.is_empty() {
         "download".to_string()
     } else {
-        name.to_string()
+        name
     }
 }
 

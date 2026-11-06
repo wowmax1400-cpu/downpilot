@@ -1077,7 +1077,27 @@ impl DownloadManager {
                 let probe_result = me.downloader.probe(&headers).await;
                 if let Ok((total, _range, suggested, content_type)) = probe_result {
                     let mut changed = false;
-                    if let Some(better) = suggested {
+                    let mut final_name = suggested.filter(|s| !s.is_empty());
+                    if final_name.is_none() || final_name.as_deref() == Some(&filename_hint) {
+                        // If no disposition header or matches fallback, refine name & extension
+                        let mut base = filename_hint.clone();
+                        let is_generic = base.eq_ignore_ascii_case("download")
+                            || base.eq_ignore_ascii_case("download.bin")
+                            || base.starts_with("videoplayback")
+                            || !base.contains('.');
+                        if is_generic {
+                            if let Some(ct) = &content_type {
+                                if let Some(known_ext) = crate::db::extension_from_content_type(ct) {
+                                    if !base.ends_with(known_ext) {
+                                        let clean_base = base.trim_end_matches(".bin");
+                                        base = format!("{clean_base}{known_ext}");
+                                        final_name = Some(base);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(better) = final_name {
                         if better != filename_hint && !better.is_empty() {
                             let _ = me.db.set_filename(id2, &better);
                             changed = true;

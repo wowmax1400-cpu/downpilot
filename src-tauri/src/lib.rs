@@ -1470,11 +1470,19 @@ async fn handle_nmh_message(frame: &[u8], manager: &Arc<DownloadManager>) -> Nmh
             let s = manager.settings();
             // Only expose what the extension needs to enforce capture rules.
             // All lists are comma-separated (empty when unset).
+            let auto = s.auto_intercept.unwrap_or(true);
+            let mode = s.capture_mode.clone().unwrap_or_else(|| {
+                if auto {
+                    "auto".to_string()
+                } else {
+                    "ask".to_string()
+                }
+            });
             NmhResponse {
                 ok: true,
                 data: Some(serde_json::json!({
-                    "auto_intercept": s.auto_intercept.unwrap_or(false),
-                    "capture_mode": s.capture_mode.clone().unwrap_or_else(|| "ask".to_string()),
+                    "auto_intercept": auto,
+                    "capture_mode": mode,
                     "clipboard_monitor": s.clipboard_monitor.unwrap_or(false),
                     "exclude_domains": (s.exclude_domains.clone().unwrap_or_default()),
                     "exclude_extensions": (s.exclude_extensions.clone().unwrap_or_default()),
