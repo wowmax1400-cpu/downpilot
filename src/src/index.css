@@ -590,17 +590,17 @@ body {
 
 /* Group Boxes (Fieldsets) */
 fieldset.groupbox, .groupbox, fieldset {
-  border: 1px solid #D0D0D0 !important;
-  border-radius: 2px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-sm) !important;
   padding: 10px !important;
   margin: 0 0 10px 0 !important;
-  background: #FFFFFF !important;
+  background: var(--surface) !important;
   box-sizing: border-box !important;
 }
 fieldset.groupbox legend, .groupbox legend, fieldset legend {
   font-size: 11px !important;
   font-weight: 600 !important;
-  color: #333333 !important;
+  color: var(--text) !important;
   padding: 0 4px !important;
   margin-left: 4px !important;
 }
@@ -615,13 +615,13 @@ fieldset.groupbox legend, .groupbox legend, fieldset legend {
   font-size: 12px !important;
 }
 .form-grid-kv > dt, .kv-grid > dt {
-  color: #333333;
+  color: var(--text-dim) !important;
   font-weight: 500;
   text-align: left;
 }
 .form-grid-kv > dd, .kv-grid > dd {
   margin: 0;
-  color: #000000;
+  color: var(--text) !important;
 }
 
 /* Form inputs & selects */
@@ -762,22 +762,22 @@ textarea.input, .input--area {
   height: 20px;
   padding: 0 8px;
   font-size: 11px;
-  color: #000000;
-  background: #FFFFFF;
-  border: 1px solid #ABABAB;
-  border-radius: 2px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
 }
 .probe-pill--ok {
-  color: #107C41;
-  border-color: #86D1A8;
-  background: #F2FBF4;
+  color: var(--success);
+  border-color: var(--success-border);
+  background: var(--success-bg);
 }
 .probe-row__err {
-  color: #C00000;
+  color: var(--danger);
   font-size: 11px;
 }
 .form-error {
-  color: #C00000;
+  color: var(--danger);
   font-size: 11px;
 }
 
