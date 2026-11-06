@@ -35,28 +35,46 @@ export function AddDownloadDialog({ store, initialUrl, initialUrls, onClose }: P
     "general",
     ...store.queues.filter((q) => q.name !== "general").map((q) => q.name),
   ];
+  // Fallback category list if store.categories is empty
+  const defaultCategories: Category[] = React.useMemo(() => [
+    { name: "compressed", label: "Compressed", extensions: ".zip,.rar,.7z,.tar,.gz,.xz,.bz2,.zst,.iso", save_dir: "", queue: "", color: "#60a5fa", builtin: true },
+    { name: "documents", label: "Documents", extensions: ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.odt,.epub,.csv", save_dir: "", queue: "", color: "#34d399", builtin: true },
+    { name: "music", label: "Music", extensions: ".mp3,.flac,.wav,.aac,.ogg,.opus,.m4a,.wma", save_dir: "", queue: "", color: "#f472b6", builtin: true },
+    { name: "video", label: "Video", extensions: ".mp4,.mkv,.webm,.avi,.mov,.wmv,.flv,.m4v,.ts,.mpg", save_dir: "", queue: "", color: "#a78bfa", builtin: true },
+    { name: "programs", label: "Programs", extensions: ".exe,.msi,.deb,.rpm,.appimage,.apk,.dmg,.run,.sh,.flatpak,.flatpakref", save_dir: "", queue: "", color: "#fb923c", builtin: true },
+    { name: "other", label: "Other", extensions: "", save_dir: "", queue: "", color: "#94a3b8", builtin: true },
+  ], []);
+
   const allCategories = React.useMemo<Category[]>(() => {
+    const list = store.categories.length > 0 ? store.categories : defaultCategories;
     const seen = new Set<string>();
     const out: Category[] = [];
-    for (const c of store.categories) {
+    for (const c of list) {
       if (!seen.has(c.name)) {
         seen.add(c.name);
         out.push(c);
       }
     }
+    if (!seen.has("other")) {
+      out.push({ name: "other", label: "Other", extensions: "", save_dir: "", queue: "", color: "#94a3b8", builtin: true });
+    }
     return out;
-  }, [store.categories]);
+  }, [store.categories, defaultCategories]);
 
   React.useEffect(() => {
     setProbe(null);
     setProbeError(null);
-    if (!name) {
-      const guess = filenameFromUrl(url);
-      if (guess) setName(guess);
-    }
-    if (url) {
-      const cat = guessCategory(filenameFromUrl(url));
-      setCategory(cat);
+    const trimmed = url.trim();
+    if (trimmed) {
+      const guess = filenameFromUrl(trimmed);
+      if (guess) {
+        setName(guess);
+        const cat = guessCategory(guess);
+        setCategory(cat);
+      }
+    } else {
+      setName("");
+      setCategory("other");
     }
   }, [url]);
 

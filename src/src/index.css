@@ -637,6 +637,11 @@ fieldset.groupbox legend, .groupbox legend, fieldset legend {
   outline: none;
   font-family: inherit !important;
 }
+.input::placeholder,
+textarea.input::placeholder {
+  color: var(--text-faint) !important;
+  opacity: 0.65 !important;
+}
 .input:focus {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 1px var(--accent);

@@ -127,12 +127,29 @@ export function guessCategory(filename: string): string {
 
 /** Filename from a URL (last path segment, query stripped). */
 export function filenameFromUrl(url: string): string {
+  if (!url || !url.trim()) return "";
   try {
-    const u = new URL(url);
+    const u = new URL(url.trim());
     const last = u.pathname.split("/").filter(Boolean).pop();
-    return last || `${u.hostname}.bin`;
+    if (last) {
+      try {
+        return decodeURIComponent(last);
+      } catch {
+        return last;
+      }
+    }
+    return `${u.hostname}.bin`;
   } catch {
-    return url.split("/").pop() || "download.bin";
+    const raw = url.trim().split("?")[0].split("#")[0];
+    const last = raw.split("/").filter(Boolean).pop();
+    if (last) {
+      try {
+        return decodeURIComponent(last);
+      } catch {
+        return last;
+      }
+    }
+    return "download.bin";
   }
 }
 
