@@ -770,27 +770,27 @@ textarea.input, .input--area {
 /* ===================== OPTIONS / SETTINGS MODAL ===================== */
 .options-dialog {
   width: 620px;
-  background: var(--modal-bg);
-  border: 1px solid var(--modal-border);
-  border-radius: var(--radius);
-  box-shadow: 0 16px 36px rgba(0,0,0,0.6);
-  font-family: inherit;
-  font-size: 12px;
+  background: #F0F0F0 !important;
+  border: 1px solid #707070 !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+  font-family: 'Segoe UI', Tahoma, sans-serif !important;
+  font-size: 12px !important;
   display: flex;
   flex-direction: column;
+  color: #000000 !important;
 }
 .dialog-titlebar {
-  height: 32px;
-  background: var(--modal-header);
+  height: 28px !important;
+  background: #FFFFFF !important;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 10px !important;
+  border-bottom: 1px solid #D0D0D0 !important;
   font-weight: 600;
-  color: var(--text);
-  border-top-left-radius: var(--radius);
-  border-top-right-radius: var(--radius);
+  color: #000000 !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
 }
 .dialog-titlebar .close-btn {
   background: transparent;
@@ -798,60 +798,99 @@ textarea.input, .input--area {
   font-size: 12px;
   cursor: pointer;
   padding: 2px 6px;
-  color: var(--text-dim);
-  border-radius: 3px;
+  color: #555555 !important;
+  border-radius: 2px;
 }
 .dialog-titlebar .close-btn:hover {
-  background: #E81123;
-  color: #FFFFFF;
+  background: #E81123 !important;
+  color: #FFFFFF !important;
 }
 .tab-strip {
   display: flex;
   gap: 2px;
-  background: var(--surface-2);
-  padding: 6px 8px 0 8px;
-  border-bottom: 1px solid var(--line);
+  background: #ECE9D8 !important;
+  padding: 4px 6px 0 6px !important;
+  border-bottom: 1px solid #D0D0D0 !important;
   overflow-x: auto;
 }
 .tab-btn {
-  padding: 5px 12px;
-  font-size: 11px;
-  border: 1px solid var(--line);
-  border-bottom: none;
-  background: var(--surface);
-  color: var(--text-dim);
+  padding: 4px 10px !important;
+  font-size: 11px !important;
+  border: 1px solid #C0C0C0 !important;
+  border-bottom: none !important;
+  background: #E0E0E0 !important;
+  color: #333333 !important;
   cursor: pointer;
-  border-radius: 4px 4px 0 0;
+  border-radius: 2px 2px 0 0 !important;
   white-space: nowrap;
 }
 .tab-btn.active {
-  background: var(--modal-bg);
-  color: var(--text);
-  border-color: var(--accent);
-  border-bottom: 1px solid var(--modal-bg);
-  font-weight: bold;
-  margin-bottom: -1px;
+  background: #FFFFFF !important;
+  color: #000000 !important; /* Fixes white-on-white invisible text */
+  border-color: #999999 !important;
+  border-bottom: 1px solid #FFFFFF !important;
+  font-weight: 600 !important;
+  margin-bottom: -1px !important;
 }
 .dialog-body {
-  background: var(--modal-bg);
-  color: var(--text);
-  padding: 14px;
+  background: #FFFFFF !important;
+  color: #000000 !important;
+  padding: 12px !important;
   min-height: 280px;
   max-height: 60vh;
   overflow-y: auto;
 }
+
+/* Scoped inputs inside Options Dialog to light theme */
+.options-dialog input,
+.options-dialog select,
+.options-dialog textarea {
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
+  border: 1px solid #7F9DB9 !important;
+  padding: 3px 6px !important;
+  font-size: 12px !important;
+  border-radius: 2px !important;
+  box-shadow: none !important;
+}
+.options-dialog input::placeholder {
+  color: #888888 !important;
+}
+.options-dialog label {
+  color: #000000 !important;
+}
+.options-dialog .cat-grid,
+.options-dialog .sites-table {
+  background: #FFFFFF !important;
+  border-color: #D0D0D0 !important;
+}
+.options-dialog .cat-grid__head,
+.options-dialog .sites-table__head {
+  background: #F0F0F0 !important;
+  color: #333333 !important;
+}
+.options-dialog .cat-grid__row,
+.options-dialog .sites-row {
+  color: #000000 !important;
+  border-bottom-color: #EEEEEE !important;
+}
+.options-dialog .cat-grid__row:hover,
+.options-dialog .sites-row:hover {
+  background: #F5F9FC !important;
+}
+
 .group-box {
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 10px;
-  margin-bottom: 10px;
-  background: var(--surface);
+  border: 1px solid #D0D0D0 !important;
+  border-radius: 0 !important;
+  padding: 10px !important;
+  margin-bottom: 10px !important;
+  background: #FFFFFF !important;
 }
 .group-box legend {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text);
-  padding: 0 6px;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #333333 !important;
+  padding: 0 4px !important;
 }
 .path-row {
   display: flex;
@@ -869,38 +908,38 @@ textarea.input, .input--area {
   align-items: center;
 }
 .grid-form label {
-  color: var(--text);
+  color: #000000 !important;
   font-weight: 500;
 }
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 10px 14px;
-  background: var(--modal-header);
-  border-top: 1px solid var(--line);
-  border-bottom-left-radius: var(--radius);
-  border-bottom-right-radius: var(--radius);
+  padding: 8px 12px !important;
+  background: #F0F0F0 !important;
+  border-top: 1px solid #D0D0D0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
 }
 .win-btn {
-  min-width: 75px;
-  height: 24px;
-  background: var(--surface-2);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  min-width: 75px !important;
+  height: 23px !important;
+  background: #E1E1E1 !important;
+  color: #000000 !important;
+  border: 1px solid #ADADAD !important;
+  border-radius: 2px !important;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 11px !important;
   font-family: inherit;
-  transition: all 0.15s;
+  transition: none !important;
 }
 .win-btn:hover {
-  background: var(--btn-hover);
-  border-color: var(--accent);
-  color: var(--text);
+  background: #E5F1FB !important;
+  border-color: #70C0E7 !important;
+  color: #000000 !important;
 }
 .win-btn:active {
-  background: #CDE4F7;
+  background: #CDE4F7 !important;
 }
 
 /* --- Categories Table (Save To Options) --- */

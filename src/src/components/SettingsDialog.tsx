@@ -700,19 +700,16 @@ export function SettingsDialog({ store, onClose }: Props) {
         </div>
 
         {/* Tab Strip */}
-        <div style={{ display: 'flex', gap: '2px', borderBottom: '1px solid #D0D0D0', background: '#ECE9D8', padding: '4px 6px 0', overflowX: 'auto' }}>
+        <div className="tab-strip" style={{ display: 'flex', gap: '2px', borderBottom: '1px solid #D0D0D0', background: '#ECE9D8', padding: '4px 6px 0', overflowX: 'auto' }}>
           {TABS.map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
+              className={`tab-btn ${activeTab === tab ? 'active' : ''}`}
               style={{
                 padding: '4px 10px',
                 fontSize: '11px',
-                border: '1px solid #C0C0C0',
-                borderBottom: activeTab === tab ? '1px solid #FFF' : 'none',
-                background: activeTab === tab ? '#FFFFFF' : '#E0E0E0',
-                fontWeight: activeTab === tab ? 'bold' : 'normal',
                 cursor: 'pointer',
                 marginBottom: activeTab === tab ? '-1px' : '0',
                 whiteSpace: 'nowrap'
@@ -724,7 +721,7 @@ export function SettingsDialog({ store, onClose }: Props) {
         </div>
 
         {/* Tab Content Panels */}
-        <div style={{ padding: '12px', background: '#FFFFFF', minHeight: '280px', maxHeight: '60vh', overflowY: 'auto' }}>
+        <div className="dialog-body" style={{ minHeight: '280px', maxHeight: '60vh', overflowY: 'auto' }}>
           {activeTab === 'General' && (
             <>
               <fieldset className="group-box">
